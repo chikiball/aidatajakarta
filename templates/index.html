@@ -1,0 +1,1374 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Jakarta AI Transport — Prediksi Penumpang</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <style>
+        :root {
+            --jkt-red: #E2231A;
+            --jkt-red-dark: #B91C1C;
+            --jkt-orange: #F97316;
+            --jkt-blue: #1E3A5F;
+            --jkt-blue-light: #2563EB;
+            --jkt-navy: #0F172A;
+            --jkt-white: #FFFFFF;
+            --jkt-gray-50: #F8FAFC;
+            --jkt-gray-100: #F1F5F9;
+            --jkt-gray-200: #E2E8F0;
+            --jkt-gray-300: #CBD5E1;
+            --jkt-gray-400: #94A3B8;
+            --jkt-gray-500: #64748B;
+            --jkt-gray-600: #475569;
+            --jkt-gray-700: #334155;
+            --jkt-gray-800: #1E293B;
+            --jkt-green: #059669;
+            --jkt-green-light: #D1FAE5;
+            --jkt-yellow: #F59E0B;
+            --jkt-purple: #7C3AED;
+            --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+            --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1);
+            --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.1);
+            --shadow-xl: 0 20px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1);
+            --radius: 16px;
+            --radius-sm: 12px;
+            --radius-xs: 8px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--jkt-gray-50);
+            color: var(--jkt-gray-800);
+            min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* ─── Header ─── */
+        .header {
+            background: linear-gradient(135deg, var(--jkt-red) 0%, var(--jkt-red-dark) 100%);
+            color: white;
+            padding: 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: var(--shadow-lg);
+        }
+
+        .header-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 20px;
+        }
+
+        .header-logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .jakarta-emblem {
+            width: 40px;
+            height: 40px;
+        }
+
+        .header-title h1 {
+            font-size: 18px;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+        }
+
+        .header-title p {
+            font-size: 11px;
+            opacity: 0.85;
+            font-weight: 500;
+        }
+
+        .update-badge {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            background: rgba(255,255,255,0.15);
+            padding: 6px 12px;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .update-badge:hover { background: rgba(255,255,255,0.25); }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #4ADE80;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.error { background: #FCA5A5; }
+        .status-dot.updating { background: #FCD34D; animation: blink 0.5s infinite; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        /* ─── Navigation Tabs ─── */
+        .nav-tabs {
+            display: flex;
+            padding: 0 16px;
+            gap: 4px;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+        }
+        .nav-tabs::-webkit-scrollbar { display: none; }
+
+        .nav-tab {
+            flex-shrink: 0;
+            padding: 10px 16px;
+            font-size: 13px;
+            font-weight: 600;
+            color: rgba(255,255,255,0.7);
+            border: none;
+            background: none;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+
+        .nav-tab.active {
+            color: white;
+            border-bottom-color: white;
+        }
+
+        .nav-tab:hover { color: white; }
+
+        /* ─── Main Content ─── */
+        .main { padding: 16px; max-width: 600px; margin: 0 auto; }
+
+        .section { display: none; }
+        .section.active { display: block; }
+
+        /* ─── Cards ─── */
+        .card {
+            background: white;
+            border-radius: var(--radius);
+            box-shadow: var(--shadow-md);
+            margin-bottom: 16px;
+            overflow: hidden;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .card-header {
+            padding: 16px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .card-header h3 {
+            font-size: 15px;
+            font-weight: 700;
+            color: var(--jkt-gray-700);
+        }
+
+        .card-body { padding: 0 20px 20px; }
+
+        /* ─── Prediction Section ─── */
+        .date-picker-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .date-input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid var(--jkt-gray-200);
+            border-radius: var(--radius-xs);
+            font-family: inherit;
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--jkt-gray-700);
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .date-input:focus { border-color: var(--jkt-red); }
+
+        .btn-predict {
+            padding: 12px 24px;
+            background: var(--jkt-red);
+            color: white;
+            border: none;
+            border-radius: var(--radius-xs);
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.1s;
+            white-space: nowrap;
+        }
+
+        .btn-predict:hover { background: var(--jkt-red-dark); }
+        .btn-predict:active { transform: scale(0.97); }
+
+        .context-badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 16px;
+        }
+
+        .badge {
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .badge-day { background: var(--jkt-gray-100); color: var(--jkt-gray-600); }
+        .badge-holiday { background: #FEF3C7; color: #92400E; }
+        .badge-ramadan { background: #D1FAE5; color: #065F46; }
+        .badge-school { background: #DBEAFE; color: #1E40AF; }
+        .badge-weekend { background: #FEE2E2; color: #991B1B; }
+
+        /* Prediction Cards Grid */
+        .prediction-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+        }
+
+        .pred-card {
+            background: var(--jkt-gray-50);
+            border-radius: var(--radius-sm);
+            padding: 16px;
+            text-align: center;
+            border: 1px solid var(--jkt-gray-200);
+            transition: all 0.2s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .pred-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+        }
+
+        .pred-card[data-mode="transjakarta"]::before { background: var(--jkt-red); }
+        .pred-card[data-mode="krl"]::before { background: #2563EB; }
+        .pred-card[data-mode="mrt"]::before { background: #059669; }
+        .pred-card[data-mode="lrt"]::before { background: #7C3AED; }
+        .pred-card[data-mode="bus sekolah"]::before { background: #F59E0B; }
+        .pred-card[data-mode="kapal"]::before { background: #0891B2; }
+        .pred-card[data-mode="kci commuter bandara"]::before { background: #6366F1; }
+        .pred-card[data-mode="mikrotrans"]::before { background: #EC4899; }
+
+        .pred-icon { font-size: 28px; margin-bottom: 6px; }
+
+        .pred-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--jkt-gray-500);
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .pred-value {
+            font-size: 22px;
+            font-weight: 800;
+            color: var(--jkt-gray-800);
+            letter-spacing: -0.5px;
+        }
+
+        .pred-confidence {
+            font-size: 10px;
+            color: var(--jkt-gray-400);
+            margin-top: 4px;
+        }
+
+        .total-card {
+            grid-column: span 2;
+            background: linear-gradient(135deg, var(--jkt-blue) 0%, var(--jkt-navy) 100%);
+            color: white;
+            border: none;
+        }
+
+        .total-card .pred-label { color: rgba(255,255,255,0.7); }
+        .total-card .pred-value { color: white; font-size: 32px; }
+        .total-card .pred-confidence { color: rgba(255,255,255,0.5); }
+
+        /* ─── Stats Section ─── */
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--jkt-gray-100);
+        }
+
+        .stat-row:last-child { border-bottom: none; }
+
+        .stat-mode {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .stat-icon { font-size: 24px; }
+
+        .stat-name {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--jkt-gray-700);
+        }
+
+        .stat-value {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--jkt-gray-800);
+        }
+
+        .stat-sub {
+            font-size: 11px;
+            color: var(--jkt-gray-400);
+        }
+
+        /* ─── Charts ─── */
+        .chart-container {
+            position: relative;
+            height: 250px;
+            margin: 12px 0;
+        }
+
+        .chart-tabs {
+            display: flex;
+            gap: 4px;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+        }
+
+        .chart-tab {
+            padding: 6px 12px;
+            font-size: 11px;
+            font-weight: 600;
+            border: 1px solid var(--jkt-gray-200);
+            border-radius: 20px;
+            background: white;
+            cursor: pointer;
+            color: var(--jkt-gray-500);
+            transition: all 0.2s;
+        }
+
+        .chart-tab.active {
+            background: var(--jkt-red);
+            color: white;
+            border-color: var(--jkt-red);
+        }
+
+        /* ─── Neural Network Infographic ─── */
+        .nn-diagram {
+            padding: 20px 0;
+        }
+
+        .nn-layer {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .nn-layer-label {
+            width: 80px;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--jkt-gray-500);
+            text-align: right;
+            padding-right: 12px;
+        }
+
+        .nn-layer-bar {
+            flex: 1;
+            height: 36px;
+            border-radius: var(--radius-xs);
+            display: flex;
+            align-items: center;
+            padding: 0 12px;
+            font-size: 12px;
+            font-weight: 700;
+            color: white;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .nn-layer-bar .neurons {
+            display: flex;
+            gap: 3px;
+            position: absolute;
+            right: 12px;
+        }
+
+        .neuron {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.4);
+        }
+
+        .feature-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 12px;
+        }
+
+        .feature-tag {
+            padding: 4px 10px;
+            background: var(--jkt-gray-100);
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--jkt-gray-600);
+        }
+
+        .feature-tag.temporal { background: #DBEAFE; color: #1E40AF; }
+        .feature-tag.holiday { background: #FEF3C7; color: #92400E; }
+        .feature-tag.cultural { background: #D1FAE5; color: #065F46; }
+        .feature-tag.cyclical { background: #F3E8FF; color: #6B21A8; }
+        .feature-tag.economic { background: #FFE4E6; color: #9F1239; }
+
+        /* ─── Loading ─── */
+        .loading {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--jkt-gray-400);
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid var(--jkt-gray-200);
+            border-top-color: var(--jkt-red);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 12px;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ─── Footer ─── */
+        .footer {
+            text-align: center;
+            padding: 24px 20px;
+            color: var(--jkt-gray-400);
+            font-size: 12px;
+        }
+
+        .footer a {
+            color: var(--jkt-red);
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        /* ─── Update Status Card ─── */
+        .update-card {
+            background: linear-gradient(135deg, #F0FDF4 0%, #DCFCE7 100%);
+            border: 1px solid #BBF7D0;
+        }
+
+        .update-card.error {
+            background: linear-gradient(135deg, #FEF2F2 0%, #FEE2E2 100%);
+            border: 1px solid #FECACA;
+        }
+
+        /* ─── Model Metrics ─── */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+        }
+
+        .metric-item {
+            background: var(--jkt-gray-50);
+            border-radius: var(--radius-xs);
+            padding: 12px;
+            text-align: center;
+        }
+
+        .metric-label {
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--jkt-gray-400);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .metric-value {
+            font-size: 20px;
+            font-weight: 800;
+            color: var(--jkt-gray-700);
+            margin-top: 2px;
+        }
+
+        /* ─── Responsive ─── */
+        @media (max-width: 380px) {
+            .prediction-grid { grid-template-columns: 1fr; }
+            .total-card { grid-column: span 1; }
+            .header-title h1 { font-size: 16px; }
+        }
+
+        /* ─── Smooth transitions ─── */
+        .fade-in {
+            animation: fadeIn 0.4s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ─── NN Flow Diagram ─── */
+        .nn-flow {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            padding: 16px 0;
+            overflow-x: auto;
+        }
+
+        .nn-node {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .nn-circle {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 800;
+            color: white;
+        }
+
+        .nn-circle-label {
+            font-size: 9px;
+            font-weight: 600;
+            color: var(--jkt-gray-400);
+            text-align: center;
+            max-width: 60px;
+        }
+
+        .nn-arrow {
+            font-size: 18px;
+            color: var(--jkt-gray-300);
+        }
+
+        /* Smooth skeleton loading */
+        .skeleton {
+            background: linear-gradient(90deg, var(--jkt-gray-100) 25%, var(--jkt-gray-200) 50%, var(--jkt-gray-100) 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+            border-radius: var(--radius-xs);
+        }
+
+        @keyframes shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- ═══ HEADER ═══ -->
+<div class="header">
+    <div class="header-top">
+        <div class="header-logo">
+            <!-- Jakarta Tugu Monas SVG Emblem -->
+            <svg class="jakarta-emblem" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="50" cy="50" r="48" fill="rgba(255,255,255,0.15)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+                <path d="M50 12 L50 28" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+                <circle cx="50" cy="10" r="3" fill="#FFD700"/>
+                <path d="M44 28 L56 28 L54 45 L46 45 Z" fill="white" opacity="0.9"/>
+                <rect x="42" y="45" width="16" height="8" rx="1" fill="white" opacity="0.9"/>
+                <path d="M38 53 L62 53 L60 75 L40 75 Z" fill="white" opacity="0.85"/>
+                <rect x="36" y="75" width="28" height="5" rx="2" fill="white" opacity="0.9"/>
+                <rect x="33" y="80" width="34" height="4" rx="2" fill="white" opacity="0.8"/>
+                <path d="M30 84 L70 84 L68 90 L32 90 Z" fill="white" opacity="0.7"/>
+                <text x="50" y="97" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="6" font-weight="700">JAKARTA</text>
+            </svg>
+            <div class="header-title">
+                <h1>Jakarta AI Transport</h1>
+                <p>Prediksi Penumpang Angkutan Umum</p>
+            </div>
+        </div>
+        <div class="update-badge" onclick="refreshData()">
+            <div class="status-dot" id="statusDot"></div>
+            <span id="updateText">Loading...</span>
+        </div>
+    </div>
+    <div class="nav-tabs">
+        <button class="nav-tab active" data-tab="predict" onclick="switchTab('predict')">🎯 Prediksi</button>
+        <button class="nav-tab" data-tab="data" onclick="switchTab('data')">📊 Data</button>
+        <button class="nav-tab" data-tab="charts" onclick="switchTab('charts')">📈 Grafik</button>
+        <button class="nav-tab" data-tab="ai" onclick="switchTab('ai')">🧠 AI Model</button>
+    </div>
+</div>
+
+<!-- ═══ MAIN ═══ -->
+<div class="main">
+
+    <!-- ─── PREDICT TAB ─── -->
+    <div class="section active" id="tab-predict">
+        <div class="card fade-in">
+            <div class="card-header">
+                <h3>📅 Pilih Tanggal Prediksi</h3>
+            </div>
+            <div class="card-body">
+                <div class="date-picker-row">
+                    <input type="date" class="date-input" id="predictDate" />
+                    <button class="btn-predict" onclick="doPrediction()">Prediksi</button>
+                </div>
+                <div class="context-badges" id="contextBadges"></div>
+            </div>
+        </div>
+
+        <div id="predictionResults">
+            <div class="loading">
+                <div class="spinner"></div>
+                <p>Pilih tanggal dan klik Prediksi...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─── DATA TAB ─── -->
+    <div class="section" id="tab-data">
+        <div class="card fade-in">
+            <div class="card-header">
+                <h3>📋 Ringkasan Data</h3>
+                <span class="stat-sub" id="dataRange"></span>
+            </div>
+            <div class="card-body" id="statsBody">
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <p>Memuat statistik...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Update Status -->
+        <div class="card update-card" id="updateStatusCard">
+            <div class="card-header">
+                <h3>🔄 Status Pembaruan Data</h3>
+            </div>
+            <div class="card-body">
+                <div class="stat-row">
+                    <span class="stat-name">Pembaruan Terakhir</span>
+                    <span class="stat-value" id="lastUpdate">-</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-name">Status</span>
+                    <span class="stat-value" id="updateStatusText">-</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-name">Jadwal Berikutnya</span>
+                    <span class="stat-value" id="nextUpdate">-</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-name">Total Record</span>
+                    <span class="stat-value" id="recordCount">-</span>
+                </div>
+                <div style="margin-top: 12px;">
+                    <button class="btn-predict" style="width:100%;" onclick="refreshData()">🔄 Perbarui Sekarang</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─── CHARTS TAB ─── -->
+    <div class="section" id="tab-charts">
+        <div class="card fade-in">
+            <div class="card-header">
+                <h3>📈 Tren Penumpang Harian</h3>
+            </div>
+            <div class="card-body">
+                <div class="chart-tabs" id="chartModeTabs"></div>
+                <div class="chart-container">
+                    <canvas id="timeseriesChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="card fade-in">
+            <div class="card-header">
+                <h3>🥧 Proporsi per Moda</h3>
+            </div>
+            <div class="card-body">
+                <div class="chart-container">
+                    <canvas id="pieChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="card fade-in">
+            <div class="card-header">
+                <h3>📊 Rata-rata per Hari</h3>
+            </div>
+            <div class="card-body">
+                <div class="chart-tabs" id="dowModeTabs"></div>
+                <div class="chart-container">
+                    <canvas id="dowChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─── AI MODEL TAB ─── -->
+    <div class="section" id="tab-ai">
+        <!-- NN Architecture Infographic -->
+        <div class="card fade-in">
+            <div class="card-header">
+                <h3>🧠 Arsitektur Neural Network</h3>
+            </div>
+            <div class="card-body">
+                <p style="font-size:13px; color:var(--jkt-gray-500); margin-bottom:16px;">
+                    Model menggunakan <strong>Multi-Layer Perceptron (MLP)</strong> untuk memprediksi
+                    jumlah penumpang berdasarkan pola temporal dan kalender Indonesia.
+                </p>
+
+                <!-- NN Flow Diagram -->
+                <div class="nn-flow">
+                    <div class="nn-node">
+                        <div class="nn-circle" style="background:var(--jkt-blue-light);">24</div>
+                        <span class="nn-circle-label">Input Features</span>
+                    </div>
+                    <span class="nn-arrow">→</span>
+                    <div class="nn-node">
+                        <div class="nn-circle" style="background:var(--jkt-orange);">128</div>
+                        <span class="nn-circle-label">Hidden 1 (ReLU)</span>
+                    </div>
+                    <span class="nn-arrow">→</span>
+                    <div class="nn-node">
+                        <div class="nn-circle" style="background:var(--jkt-green);">64</div>
+                        <span class="nn-circle-label">Hidden 2 (ReLU)</span>
+                    </div>
+                    <span class="nn-arrow">→</span>
+                    <div class="nn-node">
+                        <div class="nn-circle" style="background:var(--jkt-purple);">32</div>
+                        <span class="nn-circle-label">Hidden 3 (ReLU)</span>
+                    </div>
+                    <span class="nn-arrow">→</span>
+                    <div class="nn-node">
+                        <div class="nn-circle" style="background:var(--jkt-red);">1</div>
+                        <span class="nn-circle-label">Output (Passengers)</span>
+                    </div>
+                </div>
+
+                <!-- Layer Details -->
+                <div class="nn-diagram">
+                    <div class="nn-layer">
+                        <span class="nn-layer-label">Input</span>
+                        <div class="nn-layer-bar" style="background:var(--jkt-blue-light); width:100%;">
+                            24 Features
+                        </div>
+                    </div>
+                    <div class="nn-layer">
+                        <span class="nn-layer-label">Dense 1</span>
+                        <div class="nn-layer-bar" style="background:var(--jkt-orange); width:85%;">
+                            128 neurons + ReLU
+                        </div>
+                    </div>
+                    <div class="nn-layer">
+                        <span class="nn-layer-label">Dense 2</span>
+                        <div class="nn-layer-bar" style="background:var(--jkt-green); width:55%;">
+                            64 neurons + ReLU
+                        </div>
+                    </div>
+                    <div class="nn-layer">
+                        <span class="nn-layer-label">Dense 3</span>
+                        <div class="nn-layer-bar" style="background:var(--jkt-purple); width:30%;">
+                            32 neurons + ReLU
+                        </div>
+                    </div>
+                    <div class="nn-layer">
+                        <span class="nn-layer-label">Output</span>
+                        <div class="nn-layer-bar" style="background:var(--jkt-red); width:12%;">
+                            1
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Feature Engineering -->
+        <div class="card fade-in">
+            <div class="card-header">
+                <h3>⚙️ Feature Engineering</h3>
+            </div>
+            <div class="card-body">
+                <p style="font-size:13px; color:var(--jkt-gray-500); margin-bottom:12px;">
+                    Setiap tanggal direpresentasikan sebagai 24 fitur yang menangkap pola temporal,
+                    kalender libur Indonesia, dan encoding siklis.
+                </p>
+                <div class="feature-list">
+                    <span class="feature-tag temporal">Hari dalam Minggu</span>
+                    <span class="feature-tag temporal">Tanggal</span>
+                    <span class="feature-tag temporal">Bulan</span>
+                    <span class="feature-tag temporal">Minggu ke-</span>
+                    <span class="feature-tag temporal">Kuartal</span>
+                    <span class="feature-tag temporal">Tahun</span>
+                    <span class="feature-tag temporal">Weekend</span>
+                    <span class="feature-tag temporal">Senin</span>
+                    <span class="feature-tag temporal">Jumat</span>
+                    <span class="feature-tag holiday">Hari Libur</span>
+                    <span class="feature-tag holiday">Libur Keagamaan</span>
+                    <span class="feature-tag holiday">Libur Islam</span>
+                    <span class="feature-tag cultural">Ramadan</span>
+                    <span class="feature-tag cultural">Libur Sekolah</span>
+                    <span class="feature-tag holiday">Jarak ke Libur</span>
+                    <span class="feature-tag holiday">Dekat Libur</span>
+                    <span class="feature-tag holiday">Long Weekend</span>
+                    <span class="feature-tag economic">Jarak Gajian</span>
+                    <span class="feature-tag cyclical">Sin(Hari)</span>
+                    <span class="feature-tag cyclical">Cos(Hari)</span>
+                    <span class="feature-tag cyclical">Sin(Bulan)</span>
+                    <span class="feature-tag cyclical">Cos(Bulan)</span>
+                    <span class="feature-tag cyclical">Sin(Tanggal)</span>
+                    <span class="feature-tag cyclical">Cos(Tanggal)</span>
+                </div>
+
+                <div style="margin-top:16px; padding:12px; background:var(--jkt-gray-50); border-radius:var(--radius-xs);">
+                    <p style="font-size:12px; color:var(--jkt-gray-500);">
+                        <strong>🔵 Temporal</strong> • <strong style="color:#92400E;">🟡 Holiday</strong> •
+                        <strong style="color:#065F46;">🟢 Cultural</strong> •
+                        <strong style="color:#6B21A8;">🟣 Cyclical</strong> •
+                        <strong style="color:#9F1239;">🔴 Economic</strong>
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- How It Works -->
+        <div class="card fade-in">
+            <div class="card-header">
+                <h3>🔬 Bagaimana Prediksi Dibuat</h3>
+            </div>
+            <div class="card-body">
+                <div style="font-size:13px; color:var(--jkt-gray-600); line-height:1.8;">
+                    <div style="display:flex; gap:12px; align-items:flex-start; margin-bottom:16px;">
+                        <div style="width:32px;height:32px;border-radius:50%;background:var(--jkt-blue-light);color:white;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;flex-shrink:0;">1</div>
+                        <div><strong>Pengumpulan Data</strong><br>Data diambil harian dari API Satu Data Jakarta, mencakup 8 moda transportasi.</div>
+                    </div>
+                    <div style="display:flex; gap:12px; align-items:flex-start; margin-bottom:16px;">
+                        <div style="width:32px;height:32px;border-radius:50%;background:var(--jkt-orange);color:white;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;flex-shrink:0;">2</div>
+                        <div><strong>Feature Engineering</strong><br>Setiap tanggal diubah menjadi 24 fitur numerik yang menangkap pola waktu, hari libur, Ramadan, dan siklus.</div>
+                    </div>
+                    <div style="display:flex; gap:12px; align-items:flex-start; margin-bottom:16px;">
+                        <div style="width:32px;height:32px;border-radius:50%;background:var(--jkt-green);color:white;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;flex-shrink:0;">3</div>
+                        <div><strong>Normalisasi</strong><br>Fitur dan target dinormalisasi menggunakan StandardScaler untuk konvergensi optimal.</div>
+                    </div>
+                    <div style="display:flex; gap:12px; align-items:flex-start; margin-bottom:16px;">
+                        <div style="width:32px;height:32px;border-radius:50%;background:var(--jkt-purple);color:white;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;flex-shrink:0;">4</div>
+                        <div><strong>Pelatihan Neural Network</strong><br>Model MLP 3-layer (128→64→32 neuron) dilatih dengan Adam optimizer dan early stopping.</div>
+                    </div>
+                    <div style="display:flex; gap:12px; align-items:flex-start;">
+                        <div style="width:32px;height:32px;border-radius:50%;background:var(--jkt-red);color:white;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;flex-shrink:0;">5</div>
+                        <div><strong>Prediksi</strong><br>Untuk tanggal baru, fitur diekstrak dan dimasukkan ke model terlatih untuk menghasilkan prediksi penumpang.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Model Performance -->
+        <div class="card fade-in">
+            <div class="card-header">
+                <h3>📊 Performa Model</h3>
+            </div>
+            <div class="card-body" id="modelPerformance">
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <p>Memuat info model...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- ═══ FOOTER ═══ -->
+<div class="footer">
+    <p>Data dari <a href="https://data.jakarta.go.id" target="_blank">Satu Data Jakarta</a></p>
+    <p style="margin-top:4px;">Jakarta AI Transport © 2025 — Powered by Neural Network</p>
+</div>
+
+<script>
+    // ─── State ───
+    let timeseriesChart = null;
+    let pieChart = null;
+    let dowChart = null;
+    let cachedTimeseries = null;
+    let cachedStats = null;
+
+    const MODE_COLORS = {
+        'transjakarta': '#E2231A',
+        'krl': '#2563EB',
+        'mrt': '#059669',
+        'lrt': '#7C3AED',
+        'bus sekolah': '#F59E0B',
+        'kapal': '#0891B2',
+        'kci commuter bandara': '#6366F1',
+        'mikrotrans': '#EC4899',
+    };
+
+    // ─── Init ───
+    document.addEventListener('DOMContentLoaded', () => {
+        const today = new Date().toISOString().split('T')[0];
+        document.getElementById('predictDate').value = today;
+        loadUpdateStatus();
+        doPrediction();
+    });
+
+    // ─── Tab Switching ───
+    function switchTab(tab) {
+        document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+        document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
+        document.getElementById(`tab-${tab}`).classList.add('active');
+
+        // Lazy load
+        if (tab === 'data' && !cachedStats) loadStats();
+        if (tab === 'charts' && !cachedTimeseries) loadCharts();
+        if (tab === 'ai') loadModelInfo();
+    }
+
+    // ─── Prediction ───
+    async function doPrediction() {
+        const dateStr = document.getElementById('predictDate').value;
+        if (!dateStr) return;
+
+        const container = document.getElementById('predictionResults');
+        container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Memprediksi...</p></div>';
+
+        try {
+            const resp = await fetch(`/api/predict?date=${dateStr}`);
+            const data = await resp.json();
+
+            if (data.error) {
+                container.innerHTML = `<div class="card"><div class="card-body"><p style="color:var(--jkt-red);">⚠️ ${data.error}</p></div></div>`;
+                return;
+            }
+
+            // Context badges
+            const badges = document.getElementById('contextBadges');
+            let badgeHTML = `<span class="badge badge-day">${data.context.day_name}</span>`;
+            if (data.context.is_weekend) badgeHTML += '<span class="badge badge-weekend">🏖️ Weekend</span>';
+            if (data.context.is_holiday) badgeHTML += `<span class="badge badge-holiday">🎉 ${data.context.holiday_name}</span>`;
+            if (data.context.is_ramadan) badgeHTML += '<span class="badge badge-ramadan">🌙 Ramadan</span>';
+            if (data.context.is_school_holiday) badgeHTML += '<span class="badge badge-school">🎒 Libur Sekolah</span>';
+            badges.innerHTML = badgeHTML;
+
+            // Prediction cards
+            let html = '<div class="prediction-grid fade-in">';
+
+            // Total card first
+            html += `
+                <div class="pred-card total-card">
+                    <div class="pred-icon">🏙️</div>
+                    <div class="pred-label">Total Semua Moda</div>
+                    <div class="pred-value">${formatNumber(data.total_predicted)}</div>
+                    <div class="pred-confidence">penumpang diprediksi</div>
+                </div>`;
+
+            // Individual modes
+            for (const [mode, pred] of Object.entries(data.predictions)) {
+                const r2Pct = (pred.confidence * 100).toFixed(1);
+                html += `
+                    <div class="pred-card" data-mode="${mode}">
+                        <div class="pred-icon">${pred.icon}</div>
+                        <div class="pred-label">${pred.label}</div>
+                        <div class="pred-value">${formatNumber(pred.predicted_passengers)}</div>
+                        <div class="pred-confidence">R² ${r2Pct}% • MAE ${formatNumber(Math.round(pred.mae))}</div>
+                    </div>`;
+            }
+
+            html += '</div>';
+            container.innerHTML = html;
+
+        } catch (err) {
+            container.innerHTML = `<div class="card"><div class="card-body"><p style="color:var(--jkt-red);">⚠️ Gagal memuat: ${err.message}</p></div></div>`;
+        }
+    }
+
+    // ─── Stats ───
+    async function loadStats() {
+        try {
+            const resp = await fetch('/api/stats');
+            cachedStats = await resp.json();
+
+            if (cachedStats.error) {
+                document.getElementById('statsBody').innerHTML = `<p>⚠️ ${cachedStats.error}</p>`;
+                return;
+            }
+
+            document.getElementById('dataRange').textContent =
+                `${cachedStats.date_range.start} — ${cachedStats.date_range.end}`;
+
+            let html = '';
+            for (const [mode, s] of Object.entries(cachedStats.modes)) {
+                html += `
+                    <div class="stat-row">
+                        <div class="stat-mode">
+                            <span class="stat-icon">${s.icon}</span>
+                            <div>
+                                <div class="stat-name">${s.label}</div>
+                                <div class="stat-sub">${s.count} data points</div>
+                            </div>
+                        </div>
+                        <div style="text-align:right;">
+                            <div class="stat-value">${formatNumber(s.avg)}</div>
+                            <div class="stat-sub">rata-rata/hari</div>
+                        </div>
+                    </div>`;
+            }
+            document.getElementById('statsBody').innerHTML = html;
+
+        } catch (err) {
+            document.getElementById('statsBody').innerHTML = `<p>⚠️ ${err.message}</p>`;
+        }
+    }
+
+    // ─── Charts ───
+    async function loadCharts() {
+        try {
+            const [tsResp, statsResp] = await Promise.all([
+                fetch('/api/timeseries'),
+                cachedStats ? Promise.resolve({ json: () => cachedStats }) : fetch('/api/stats'),
+            ]);
+
+            cachedTimeseries = await tsResp.json();
+            if (!cachedStats) cachedStats = await statsResp.json();
+
+            if (cachedTimeseries.error) return;
+
+            // Build mode tabs for time series
+            const modes = Object.keys(cachedTimeseries);
+            const tabsHTML = modes.map((m, i) =>
+                `<button class="chart-tab${i === 0 ? ' active' : ''}" data-mode="${m}" onclick="updateTimeseriesChart('${m}', this)">${cachedTimeseries[m].icon} ${cachedTimeseries[m].label}</button>`
+            ).join('');
+            document.getElementById('chartModeTabs').innerHTML = tabsHTML;
+
+            // Init time series chart
+            updateTimeseriesChart(modes[0]);
+
+            // Pie chart
+            buildPieChart();
+
+            // DoW tabs & chart
+            const dowTabsHTML = modes.map((m, i) =>
+                `<button class="chart-tab${i === 0 ? ' active' : ''}" data-mode="${m}" onclick="updateDowChart('${m}', this)">${cachedTimeseries[m].icon} ${cachedTimeseries[m].label}</button>`
+            ).join('');
+            document.getElementById('dowModeTabs').innerHTML = dowTabsHTML;
+            updateDowChart(modes[0]);
+
+        } catch (err) {
+            console.error('Charts error:', err);
+        }
+    }
+
+    function updateTimeseriesChart(mode, btn) {
+        if (btn) {
+            btn.closest('.chart-tabs').querySelectorAll('.chart-tab').forEach(t => t.classList.remove('active'));
+            btn.classList.add('active');
+        }
+
+        const series = cachedTimeseries[mode];
+        if (!series) return;
+
+        // Downsample for performance (show weekly avg)
+        const weekly = {};
+        series.data.forEach(d => {
+            const week = d.date.substring(0, 7); // group by month
+            if (!weekly[week]) weekly[week] = [];
+            weekly[week].push(d.value);
+        });
+
+        const labels = Object.keys(weekly);
+        const values = labels.map(w => {
+            const vals = weekly[w];
+            return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+        });
+
+        const ctx = document.getElementById('timeseriesChart');
+        if (timeseriesChart) timeseriesChart.destroy();
+
+        timeseriesChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [{
+                    label: series.label,
+                    data: values,
+                    borderColor: MODE_COLORS[mode] || '#E2231A',
+                    backgroundColor: (MODE_COLORS[mode] || '#E2231A') + '20',
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 3,
+                    pointHoverRadius: 6,
+                    borderWidth: 2,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => `${formatNumber(ctx.parsed.y)} penumpang (avg)`
+                        }
+                    }
+                },
+                scales: {
+                    x: { grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 45 } },
+                    y: {
+                        grid: { color: '#F1F5F9' },
+                        ticks: {
+                            font: { size: 10 },
+                            callback: v => formatCompact(v)
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    function buildPieChart() {
+        if (!cachedStats) return;
+        const modes = Object.entries(cachedStats.modes);
+        const ctx = document.getElementById('pieChart');
+        if (pieChart) pieChart.destroy();
+
+        pieChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: modes.map(([_, s]) => s.label),
+                datasets: [{
+                    data: modes.map(([_, s]) => s.avg),
+                    backgroundColor: modes.map(([m]) => MODE_COLORS[m] || '#999'),
+                    borderWidth: 2,
+                    borderColor: '#fff',
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: { font: { size: 11, family: 'Plus Jakarta Sans' }, padding: 12 }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => `${ctx.label}: ${formatNumber(ctx.parsed)} avg/hari`
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    function updateDowChart(mode, btn) {
+        if (btn) {
+            btn.closest('.chart-tabs').querySelectorAll('.chart-tab').forEach(t => t.classList.remove('active'));
+            btn.classList.add('active');
+        }
+
+        const series = cachedTimeseries[mode];
+        if (!series) return;
+
+        const dowData = [0,0,0,0,0,0,0];
+        const dowCount = [0,0,0,0,0,0,0];
+        const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+
+        series.data.forEach(d => {
+            const dow = new Date(d.date).getDay();
+            dowData[dow] += d.value;
+            dowCount[dow]++;
+        });
+
+        const avgByDow = dowData.map((total, i) => dowCount[i] ? Math.round(total / dowCount[i]) : 0);
+
+        const ctx = document.getElementById('dowChart');
+        if (dowChart) dowChart.destroy();
+
+        dowChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: dayNames,
+                datasets: [{
+                    label: series.label,
+                    data: avgByDow,
+                    backgroundColor: dayNames.map((_, i) =>
+                        i === 0 || i === 6 ? '#FCA5A5' : MODE_COLORS[mode] || '#E2231A'
+                    ),
+                    borderRadius: 8,
+                    borderSkipped: false,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => `${formatNumber(ctx.parsed.y)} avg penumpang`
+                        }
+                    }
+                },
+                scales: {
+                    x: { grid: { display: false }, ticks: { font: { size: 11 } } },
+                    y: {
+                        grid: { color: '#F1F5F9' },
+                        ticks: { font: { size: 10 }, callback: v => formatCompact(v) }
+                    }
+                }
+            }
+        });
+    }
+
+    // ─── Model Info ───
+    async function loadModelInfo() {
+        try {
+            const resp = await fetch('/api/model-info');
+            const data = await resp.json();
+
+            if (!data.models || Object.keys(data.models).length === 0) {
+                document.getElementById('modelPerformance').innerHTML = '<p style="color:var(--jkt-gray-400);">Model belum dilatih.</p>';
+                return;
+            }
+
+            let html = '';
+            for (const [mode, m] of Object.entries(data.models)) {
+                const r2Pct = (m.r2 * 100).toFixed(1);
+                const r2Color = m.r2 > 0.8 ? 'var(--jkt-green)' : m.r2 > 0.5 ? 'var(--jkt-yellow)' : 'var(--jkt-red)';
+                html += `
+                    <div style="margin-bottom:12px; padding:12px; background:var(--jkt-gray-50); border-radius:var(--radius-xs); border-left:4px solid ${MODE_COLORS[mode] || '#999'};">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <strong style="font-size:13px;">${mode}</strong>
+                            <span style="font-size:12px; font-weight:700; color:${r2Color};">R² ${r2Pct}%</span>
+                        </div>
+                        <div style="display:flex; gap:16px; margin-top:6px; font-size:11px; color:var(--jkt-gray-500);">
+                            <span>MAE: ${formatNumber(Math.round(m.mae))}</span>
+                            <span>Samples: ${m.samples}</span>
+                            <span>Arch: ${m.architecture}</span>
+                        </div>
+                    </div>`;
+            }
+
+            document.getElementById('modelPerformance').innerHTML = html;
+
+        } catch (err) {
+            document.getElementById('modelPerformance').innerHTML = `<p>⚠️ ${err.message}</p>`;
+        }
+    }
+
+    // ─── Update Status ───
+    async function loadUpdateStatus() {
+        try {
+            const resp = await fetch('/api/update-status');
+            const data = await resp.json();
+
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('updateText');
+
+            if (data.is_updating) {
+                dot.className = 'status-dot updating';
+                text.textContent = 'Memperbarui...';
+            } else if (data.last_status === 'success' || data.last_status === 'cached') {
+                dot.className = 'status-dot';
+                text.textContent = `${data.records_count} records`;
+            } else {
+                dot.className = 'status-dot error';
+                text.textContent = 'Error';
+            }
+
+            document.getElementById('lastUpdate').textContent =
+                data.last_update ? new Date(data.last_update).toLocaleString('id-ID') : '-';
+            document.getElementById('updateStatusText').textContent =
+                data.last_status || '-';
+            document.getElementById('nextUpdate').textContent =
+                data.next_update || '-';
+            document.getElementById('recordCount').textContent =
+                data.records_count ? formatNumber(data.records_count) : '-';
+
+        } catch (err) {
+            document.getElementById('updateText').textContent = 'Offline';
+        }
+    }
+
+    async function refreshData() {
+        try {
+            await fetch('/api/update-now', { method: 'POST' });
+            document.getElementById('statusDot').className = 'status-dot updating';
+            document.getElementById('updateText').textContent = 'Memperbarui...';
+
+            // Poll for completion
+            const poll = setInterval(async () => {
+                const resp = await fetch('/api/update-status');
+                const data = await resp.json();
+                if (!data.is_updating) {
+                    clearInterval(poll);
+                    loadUpdateStatus();
+                    // Reload data
+                    cachedStats = null;
+                    cachedTimeseries = null;
+                }
+            }, 2000);
+        } catch (err) {
+            alert('Gagal memperbarui: ' + err.message);
+        }
+    }
+
+    // ─── Helpers ───
+    function formatNumber(n) {
+        return new Intl.NumberFormat('id-ID').format(n);
+    }
+
+    function formatCompact(n) {
+        if (n >= 1000000) return (n / 1000000).toFixed(1) + 'jt';
+        if (n >= 1000) return (n / 1000).toFixed(0) + 'rb';
+        return n;
+    }
+</script>
+
+</body>
+</html>
