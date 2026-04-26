@@ -1,8 +1,9 @@
 # Jakarta AI Transport — Project Context
 
 > Last updated: 2026-04-26
-> Repo: `/Users/nandha_handharu/Documents/Nandha/GitHub/aidatajakarta`
-> Remote: `origin/main` on GitHub
+> Repo: `https://github.com/chikiball/aidatajakarta.git`
+> Local: `/Users/nandha_handharu/Documents/Nandha/GitHub/aidatajakarta`
+> Server: `/home/nandha/server/sites/aidatajakarta` (Ubuntu home server)
 
 ---
 
@@ -54,13 +55,26 @@ aidatajakarta/
 ├── holidays.py            # Indonesian holidays 2024-2026, Ramadan, school holidays
 ├── templates/
 │   └── index.html         # Single-page frontend (4 tabs), Chart.js, Jakarta theme
-├── data/
-│   └── passenger_data.json  # Cached API response (gitignored)
-├── models/
-│   └── <mode>_model.pkl     # Trained sklearn models + scalers (gitignored)
-├── static/                # (empty, reserved for future assets)
+├── data/                  # (gitignored)
+│   └── passenger_data.json  # Cached API response
+├── models/                # (gitignored)
+│   └── <mode>_model.pkl     # Trained sklearn models + scalers + metrics
+├── static/                # (reserved for future assets)
+├── server-setup/          # ← deployment configs for self-hosted Ubuntu server
+│   ├── docker-compose.yml    # Nginx gateway container definition
+│   ├── nginx/
+│   │   └── aidatajakarta.conf  # Reverse proxy: proxy_pass http://aidatajakarta:8080
+│   └── scripts/
+│       ├── init-server.sh    # One-time full server bootstrap
+│       ├── deploy-site.sh    # Redeploy any site (pull → build → restart)
+│       ├── status.sh         # Dashboard for all running sites
+│       └── add-site.sh       # Scaffold a new site with nginx config
+├── .github/
+│   └── workflows/
+│       └── fly-deploy.yml    # GitHub Actions CI for Fly.io
 ├── requirements.txt       # flask, scikit-learn, numpy, apscheduler, requests, joblib, gunicorn
 ├── Dockerfile             # python:3.11-slim, gunicorn 2 workers
+├── docker-compose.yml     # App container (joins server-net, exposes 8080 internally)
 ├── fly.toml               # Fly.io config: sin region, 1 GB, auto-stop
 ├── .dockerignore
 ├── .gitignore             # ignores data/, models/, __pycache__/
@@ -167,7 +181,138 @@ aidatajakarta/
 
 ## 9. Deployment
 
-### Fly.io
+### 9A. Self-Hosted Ubuntu Server (primary)
+
+#### Architecture — All-Docker, No Host Nginx
+
+The server runs an **all-Docker** multi-site architecture. There is no host-level Nginx — everything runs in containers on a shared Docker network called `server-net`. Nginx routes to app containers **by container name** (DNS resolution on the Docker network), so no host-port allocation is needed.
+
+```
+/home/nandha/server/
+├── docker-compose.yml          ← nginx-gateway container (ports 80, 443)
+├── nginx/
+│   ├── conf.d/                 ← Nginx reads *.conf from here
+│   │   ├── aidatajakarta.conf  ← proxy_pass http://aidatajakarta:8080
+│   │   └── <nextsite>.conf     ← proxy_pass http://<nextsite>:<port> (future)
+│   └── certs/                  ← for future SSL certificates
+├── sites/
+│   ├── aidatajakarta/          ← git clone of this repo
+│   │   ├── docker-compose.yml     container_name: aidatajakarta
+│   │   ├── Dockerfile             python:3.11-slim + gunicorn
+│   │   └── ...                    app code
+│   └── <nextsite>/             ← future sites (same pattern)
+└── scripts/
+    ├── init-server.sh          ← one-time full bootstrap (creates everything)
+    ├── deploy-site.sh <name>   ← pull → build → restart → health check
+    ├── status.sh               ← dashboard for all running sites
+    └── add-site.sh <n> <r> <p> ← scaffold a new site + nginx config
+```
+
+#### How containers connect
+
+```
+Internet :80/:443
+    │
+    ▼
+┌──────────────────────┐
+│  nginx-gateway       │  (nginx:alpine, ports 80/443 on host)
+│  network: server-net │
+└──────┬───────────────┘
+       │  proxy_pass http://aidatajakarta:8080
+       ▼
+┌──────────────────────┐
+│  aidatajakarta       │  (python:3.11-slim, expose 8080 — no host port)
+│  network: server-net │
+│  volumes: app-data,  │
+│           app-models │
+└──────────────────────┘
+```
+
+- `nginx-gateway` is the **only** container with host port bindings (80, 443).
+- App containers use `expose` (internal only) — never `ports`.
+- Nginx resolves `http://aidatajakarta:8080` via Docker's built-in DNS on `server-net`.
+- Each site is isolated in its own `docker-compose.yml` and can be started/stopped independently.
+
+#### Key files
+
+| File | Location | Purpose |
+|---|---|---|
+| `server-setup/docker-compose.yml` | Copied to `/home/nandha/server/` | Defines nginx-gateway + server-net network |
+| `server-setup/nginx/aidatajakarta.conf` | Copied to `nginx/conf.d/` | Reverse proxy config for this site |
+| `server-setup/scripts/init-server.sh` | Runs once | Creates folders, network, nginx container, deploys app |
+| `server-setup/scripts/deploy-site.sh` | Ongoing use | `git pull` → `docker compose build` → `up -d` → health check |
+| `server-setup/scripts/status.sh` | Ongoing use | Shows all sites, container status, health, nginx configs |
+| `server-setup/scripts/add-site.sh` | Future sites | Clones repo, generates nginx conf, reloads gateway |
+| `docker-compose.yml` (repo root) | Per-site | App container with `server-net` external network + named volumes |
+
+#### First-time setup (one command)
+
+```bash
+git clone https://github.com/chikiball/aidatajakarta.git /tmp/setup && \
+sudo bash /tmp/setup/server-setup/scripts/init-server.sh && \
+rm -rf /tmp/setup
+```
+
+The init script performs 5 steps:
+1. Creates `/home/nandha/server/{nginx/conf.d, nginx/certs, sites, scripts}`
+2. Creates Docker network `server-net`
+3. Starts `nginx-gateway` container (ports 80 & 443 → host)
+4. Clones repo into `sites/aidatajakarta/`, builds & starts app container
+5. Copies nginx config and management scripts
+
+#### Redeploy after code changes
+
+```bash
+sudo bash /home/nandha/server/scripts/deploy-site.sh aidatajakarta
+```
+
+#### Check status
+
+```bash
+sudo bash /home/nandha/server/scripts/status.sh
+```
+
+#### Adding a future second site
+
+```bash
+sudo bash /home/nandha/server/scripts/add-site.sh mysite https://github.com/user/mysite.git 3000
+sudo bash /home/nandha/server/scripts/deploy-site.sh mysite
+```
+
+The new site's `docker-compose.yml` must follow the convention:
+```yaml
+services:
+  app:
+    container_name: mysite        # ← nginx proxies to this name
+    expose: ["3000"]              # ← internal port only, no host binding
+    networks: [server-net]
+networks:
+  server-net:
+    external: true
+```
+
+#### Data persistence
+
+- Docker **named volumes** (`app-data`, `app-models`) survive container restarts and rebuilds.
+- On first boot (or if volumes are empty), the app auto-fetches from the Jakarta API and trains models.
+
+#### Useful commands
+
+| Task | Command |
+|---|---|
+| View app logs | `cd /home/nandha/server/sites/aidatajakarta && sudo docker compose logs -f --tail 50` |
+| Restart app only | `cd /home/nandha/server/sites/aidatajakarta && sudo docker compose restart` |
+| Restart nginx | `sudo docker exec nginx-gateway nginx -s reload` |
+| Stop everything | `cd /home/nandha/server && sudo docker compose down` (nginx) then per-site |
+| Force rebuild | `cd /home/nandha/server/sites/aidatajakarta && sudo docker compose up -d --build --force-recreate` |
+| Trigger data refresh | `curl -X POST http://localhost/api/update-now` |
+| Docker disk usage | `sudo docker system df` |
+| Clean unused images | `sudo docker image prune -f` |
+
+---
+
+### 9B. Fly.io (alternative / staging)
+
 ```bash
 fly launch          # first time — creates app 'aidatajakarta' in sin region
 fly deploy          # subsequent deploys
@@ -175,8 +320,11 @@ fly deploy          # subsequent deploys
 - Region: **sin** (Singapore)
 - VM: shared CPU, 1 GB RAM
 - Port: 8080, force HTTPS, auto-start/stop
+- No persistent volume — data/models rebuilt on each restart (auto-fetch on startup)
+- GitHub Actions workflow in `.github/workflows/fly-deploy.yml`
 
-### Local
+### 9C. Local development
+
 ```bash
 pip install -r requirements.txt
 python app.py       # → http://localhost:8080
@@ -190,7 +338,7 @@ python app.py       # → http://localhost:8080
 - **LRT** has narrow passenger range (1,450–8,345) → model underfits (R² 0.28). Consider separate feature engineering.
 - **KRL** has high variance and zero-value outliers → could benefit from outlier filtering.
 - Holiday calendar is **hardcoded** through 2026. Needs annual extension or dynamic source.
-- No persistent volume on Fly.io — `data/` and `models/` are rebuilt on each deploy/restart (acceptable since auto-fetch runs on startup).
-- Consider adding **Fly.io volume** or **SQLite** for persistence across restarts.
+- **SSL/HTTPS** not yet configured on home server. Add with Let's Encrypt + certbot container or mount certs into `nginx/certs/`.
 - Consider **weather data** as additional features (rain strongly affects Jakarta commuting).
 - Consider **lagged features** (yesterday's passenger count) if real-time data becomes available.
+- Fly.io has no persistent volume — data/models are rebuilt on each deploy/restart (acceptable since auto-fetch runs on startup). Home server uses Docker named volumes which persist.
