@@ -183,133 +183,89 @@ aidatajakarta/
 
 ### 9A. Self-Hosted Ubuntu Server (primary)
 
-#### Architecture — Cloudflare Tunnel + All-Docker
+- **Server:** Ubuntu home server at `/home/nandha/server/`
+- **Domain:** `nandharu.uk` (registered at Cloudflare)
+- **Live URL:** https://jakarta.nandharu.uk
+- **Architecture:** Cloudflare Tunnel → Nginx → Docker containers (zero exposed ports)
 
-The server uses a **zero-exposed-ports** architecture. Traffic flows through a Cloudflare Tunnel — an outbound-only encrypted connection from the server to Cloudflare's edge. No router port forwarding is needed and the home IP is never revealed.
-
-```
-Internet → Cloudflare Edge (DDoS/WAF/SSL) → cloudflared tunnel → nginx-gateway → app
-```
-
-All components run as Docker containers on a shared network (`server-net`).
+#### Traffic flow
 
 ```
-/home/nandha/server/
-├── docker-compose.yml          ← nginx-gateway + cloudflare-tunnel containers
-├── .env                        ← CF_TUNNEL_TOKEN (secret, not in git)
-├── nginx/
-│   ├── nginx.conf              ← Hardened main config (rate limits, headers, bot block)
-│   ├── conf.d/                 ← Per-site reverse proxy configs
-│   │   ├── aidatajakarta.conf
-│   │   └── <nextsite>.conf     (future)
-│   └── certs/                  ← Reserved for future SSL
-├── sites/
-│   ├── aidatajakarta/          ← git clone of this repo
-│   └── <nextsite>/             (future)
-├── scripts/
-│   ├── init-server.sh          ← One-time full bootstrap
-│   ├── deploy-site.sh <name>   ← Pull → build → restart → health check
-│   ├── status.sh               ← Dashboard for all sites
-│   └── add-site.sh <n> <r> <p> ← Scaffold a new site
-└── security/
-    └── harden-os.sh            ← UFW + Fail2Ban + SSH hardening
-```
-
-#### How containers connect
-
-```
-Internet
-    │ (HTTPS, Cloudflare-terminated)
+Visitor → https://jakarta.nandharu.uk
+    │
     ▼
 ┌──────────────────────────────┐
-│  Cloudflare Edge             │  DDoS protection, WAF, SSL, caching, geo-block
+│  Cloudflare Edge (SIN)       │  HTTPS termination, DDoS, WAF, caching
 └──────────┬───────────────────┘
-           │ (encrypted tunnel, outbound-only)
+           │  encrypted tunnel (outbound-only from server)
            ▼
 ┌──────────────────────────────┐
-│  cloudflare-tunnel           │  (cloudflare/cloudflared:latest)
-│  network: server-net         │  No host ports — outbound connection only
+│  cloudflare-tunnel           │  cloudflare/cloudflared:latest
+│  network: server-net         │  no host ports
 └──────────┬───────────────────┘
-           │ proxy_pass http://nginx-gateway:80
+           │  http://nginx-gateway:80
            ▼
 ┌──────────────────────────────┐
-│  nginx-gateway               │  (nginx:alpine, expose 80 — NO host port)
-│  network: server-net         │  Rate limiting, security headers, bot blocking
+│  nginx-gateway               │  nginx:alpine, expose 80 (internal only)
+│  network: server-net         │  rate limiting, security headers, bot block
 └──────────┬───────────────────┘
-           │ proxy_pass http://aidatajakarta:8080
+           │  http://aidatajakarta:8080
            ▼
 ┌──────────────────────────────┐
-│  aidatajakarta               │  (python:3.11-slim, non-root, read-only fs)
-│  network: server-net         │  expose 8080, no host port
-│  volumes: app-data,          │  Resource limits: 1 GB RAM, 1 CPU
+│  aidatajakarta               │  python:3.11-slim, non-root, read-only fs
+│  network: server-net         │  expose 8080 (internal only)
+│  volumes: app-data,          │  resource limits: 1 GB RAM, 1 CPU
 │           app-models         │
 └──────────────────────────────┘
 ```
 
-**Key security properties:**
-- **Zero host port bindings** — no container exposes ports to the host network.
-- Cloudflare Tunnel is **outbound-only** — the server initiates the connection.
-- Nginx is only reachable by `cloudflare-tunnel` on the Docker network.
-- App container runs as **non-root user**, with **read-only filesystem** and **no-new-privileges**.
+#### Server folder layout
 
-#### Key files
-
-| File | Location | Purpose |
-|---|---|---|
-| `server-setup/docker-compose.yml` | → `/home/nandha/server/` | Nginx gateway + Cloudflare Tunnel + server-net |
-| `server-setup/nginx/nginx.conf` | → `nginx/nginx.conf` | Hardened main config (rate limits, headers, bot block) |
-| `server-setup/nginx/aidatajakarta.conf` | → `nginx/conf.d/` | Per-route rate limiting, Cloudflare IP forwarding |
-| `server-setup/scripts/init-server.sh` | Runs once | Full bootstrap (6 steps including OS hardening) |
-| `server-setup/security/harden-os.sh` | Runs once | UFW firewall + Fail2Ban + SSH hardening |
-| `docker-compose.yml` (repo root) | Per-site | App container: read-only, non-root, resource-limited |
-| `Dockerfile` | Per-site | Non-root `appuser`, curl for healthcheck |
-
-#### First-time setup
-
-```bash
-# Without Cloudflare token (LAN-only, add tunnel later):
-git clone https://github.com/chikiball/aidatajakarta.git /tmp/setup && \
-sudo bash /tmp/setup/server-setup/scripts/init-server.sh && \
-rm -rf /tmp/setup
-
-# With Cloudflare token (full public access):
-git clone https://github.com/chikiball/aidatajakarta.git /tmp/setup && \
-sudo bash /tmp/setup/server-setup/scripts/init-server.sh YOUR_TUNNEL_TOKEN && \
-rm -rf /tmp/setup
+```
+/home/nandha/server/
+├── docker-compose.yml          ← nginx-gateway + cloudflare-tunnel
+├── .env                        ← CF_TUNNEL_TOKEN (secret, not in git)
+├── nginx/
+│   ├── nginx.conf              ← Hardened main config
+│   ├── conf.d/
+│   │   ├── aidatajakarta.conf  ← proxy_pass http://aidatajakarta:8080
+│   │   └── <nextsite>.conf     (future sites)
+│   └── certs/                  ← reserved for future SSL
+├── sites/
+│   ├── aidatajakarta/          ← git clone, docker-compose, Dockerfile
+│   └── <nextsite>/             (future sites)
+├── scripts/
+│   ├── deploy-site.sh <name>   ← pull → build → restart → health check
+│   ├── status.sh               ← dashboard for all sites
+│   └── add-site.sh <n> <r> <p> ← scaffold a new site
+└── security/
+    └── harden-os.sh            ← UFW + Fail2Ban + SSH hardening
 ```
 
-The init script performs 6 steps:
-1. Creates `/home/nandha/server/{nginx, sites, scripts, security}`
-2. Creates Docker network `server-net`
-3. Starts nginx-gateway + cloudflare-tunnel containers
-4. Clones repo, builds & starts aidatajakarta container
-5. Copies management scripts
-6. Runs OS hardening (UFW, Fail2Ban, SSH)
+#### Key files in this repo
 
-#### Cloudflare Tunnel setup
-
-1. Go to [Cloudflare Zero Trust](https://one.dash.cloudflare.com) → Networks → Tunnels
-2. Create a tunnel → copy the token
-3. In the tunnel config, add a **Public Hostname**:
-   - Subdomain: `jakarta` (or whatever you want)
-   - Domain: `yourdomain.com`
-   - Service: `http://nginx-gateway:80`
-4. Pass the token to `init-server.sh` or save it:
-   ```bash
-   echo 'CF_TUNNEL_TOKEN=your-token' > /home/nandha/server/.env
-   cd /home/nandha/server && sudo docker compose up -d
-   ```
+| File | Deployed to | Purpose |
+|---|---|---|
+| `server-setup/docker-compose.yml` | `/home/nandha/server/` | Nginx + Cloudflare Tunnel containers |
+| `server-setup/nginx/nginx.conf` | `nginx/nginx.conf` | Hardened main config (rate limits, headers) |
+| `server-setup/nginx/aidatajakarta.conf` | `nginx/conf.d/` | Per-route rate limits, CF real IP |
+| `server-setup/security/harden-os.sh` | `security/` | UFW + Fail2Ban + SSH hardening |
+| `server-setup/scripts/*.sh` | `scripts/` | deploy, status, add-site management |
+| `docker-compose.yml` (repo root) | `sites/aidatajakarta/` | App container (hardened) |
+| `Dockerfile` (repo root) | `sites/aidatajakarta/` | Non-root `appuser`, curl for healthcheck |
 
 #### Useful commands
 
 | Task | Command |
 |---|---|
+| Status dashboard | `sudo bash /home/nandha/server/scripts/status.sh` |
+| Redeploy site | `sudo bash /home/nandha/server/scripts/deploy-site.sh aidatajakarta` |
 | View app logs | `cd /home/nandha/server/sites/aidatajakarta && sudo docker compose logs -f --tail 50` |
 | Restart app | `cd /home/nandha/server/sites/aidatajakarta && sudo docker compose restart` |
 | Restart nginx | `sudo docker exec nginx-gateway nginx -s reload` |
 | Restart tunnel | `sudo docker restart cloudflare-tunnel` |
-| Redeploy site | `sudo bash /home/nandha/server/scripts/deploy-site.sh aidatajakarta` |
-| Status dashboard | `sudo bash /home/nandha/server/scripts/status.sh` |
+| Tunnel logs | `sudo docker logs cloudflare-tunnel --tail 20` |
+| Force rebuild | `cd /home/nandha/server/sites/aidatajakarta && sudo docker compose up -d --build --force-recreate` |
 | Firewall status | `sudo ufw status verbose` |
 | Fail2Ban status | `sudo fail2ban-client status sshd` |
 
@@ -317,80 +273,253 @@ The init script performs 6 steps:
 
 ### 9B. Security — Defense in Depth (5 Layers)
 
-#### Layer 1: Cloudflare (edge)
-- **DDoS protection** — absorbs volumetric attacks at Cloudflare's edge
-- **WAF** — blocks SQL injection, XSS, etc.
-- **SSL termination** — free HTTPS, visitors never see your server
-- **Bot management** — challenge suspicious traffic
-- **IP hiding** — home IP never revealed
-- **Geo-blocking** — optionally restrict to specific countries
-- **Caching** — reduces load for static assets
-
-#### Layer 2: OS Firewall + Fail2Ban (`server-setup/security/harden-os.sh`)
-
-| Component | Config |
-|---|---|
-| **UFW** | Default deny incoming, allow outgoing. SSH only from LAN (`192.168.0.0/16`). Zero public ports. |
-| **Fail2Ban** | SSH: 3 failed attempts → 24h ban. |
-| **SSH** | Root login disabled, max 3 auth tries, X11 forwarding off. |
-| **Auto-updates** | `unattended-upgrades` for security patches. |
-
-#### Layer 3: Nginx Hardening (`server-setup/nginx/nginx.conf`)
-
-| Protection | Detail |
-|---|---|
-| **Rate limiting** | General: 10 req/s (burst 20). API: 5 req/s (burst 10). POST update: 1 req/s. |
-| **Connection limits** | 30 per IP (general), 10 (API). |
-| **Security headers** | X-Frame-Options, X-Content-Type-Options, XSS-Protection, Referrer-Policy, Permissions-Policy |
-| **Server hide** | `server_tokens off`. |
-| **Bad bot block** | User-agent filter: sqlmap, nikto, nmap, dirbuster, masscan. |
-| **Path blocking** | 404 for `.env`, `.git`, `wp-admin`, `.php`, `cgi-bin`. |
-| **Request limits** | Max body 1 MB, header limits, 10s timeouts. |
-| **Real IP** | Uses `$http_cf_connecting_ip` from Cloudflare. |
-
-#### Layer 4: Docker Isolation (`docker-compose.yml` + `Dockerfile`)
-
-| Protection | Detail |
-|---|---|
-| **Non-root user** | Runs as `appuser` inside container. |
-| **Read-only filesystem** | `read_only: true`. |
-| **Writable tmpfs** | Only `/tmp` (in-memory). |
-| **No privilege escalation** | `no-new-privileges: true`. |
-| **Resource limits** | 1 GB RAM, 1 CPU max. |
-| **No host ports** | `expose` only. |
-| **Named volumes** | `app-data`, `app-models` are the only writable persistent paths. |
-
-#### Layer 5: Application
-
-| Property | Detail |
-|---|---|
-| **Read-only API** | No user input stored. No database. No file uploads. |
-| **No authentication needed** | Public data only. |
-| **Minimal surface** | 7 GET + 1 POST endpoint. |
-| **No secrets in code** | Tunnel token in `.env` on server (not in git). |
+| Layer | Component | What it does |
+|---|---|---|
+| **1. Cloudflare** | Edge network | DDoS, WAF, SSL termination, bot management, IP hiding, geo-blocking, caching |
+| **2. OS** | UFW + Fail2Ban + SSH | Deny all inbound, SSH from LAN only, 3 failed SSH → 24h ban, root login disabled, auto-updates |
+| **3. Nginx** | Rate limits + headers | 10/5/1 req/s by route, security headers, server version hidden, bad bot block, suspicious path block |
+| **4. Docker** | Container isolation | Non-root user, read-only fs, no-new-privileges, 1GB/1CPU limits, no host ports, named volumes only |
+| **5. App** | Minimal surface | Read-only API, no DB, no uploads, no secrets in code, 7 GET + 1 POST endpoint |
 
 ---
 
-### 9C. Fly.io (alternative / staging)
+### 9C. Cloudflare Tunnel — Full Setup Guide
 
+This is the step-by-step that was used to deploy `jakarta.nandharu.uk` and should be followed for any future site on the same server.
+
+#### Prerequisites
+
+1. **A domain on Cloudflare.** Buy directly from Cloudflare (cheapest: `.xyz` ~$1/yr). Domain Registration → Register Domains. Buying from Cloudflare means nameservers are already set — no migration wait.
+2. **Ubuntu server with Docker installed.** The home server at `/home/nandha/server/`.
+
+#### Step 1 — Create a Tunnel (one-time, shared by all sites)
+
+1. Go to **[one.dash.cloudflare.com](https://one.dash.cloudflare.com)** (Zero Trust dashboard)
+2. First time: pick a team name → select **Free plan**
+3. Sidebar → **Networks** → **Connectors** (previously called "Tunnels")
+4. Click **"Create a connector"**
+5. Select **Cloudflared** → Next
+6. Name it: `home-server` → Save
+
+#### Step 2 — Copy the Tunnel Token
+
+1. On the "Install connector" page, select the **Docker** tab
+2. You'll see: `docker run cloudflare/cloudflared ... --token eyJhIjoiNWU...`
+3. Copy **only** the token — the `eyJ...` part (very long, 150+ chars)
+4. Click Next
+
+**⚠️ Token ≠ Tunnel ID.** The Tunnel ID is a short UUID. The token starts with `eyJ` and is 150+ characters.
+
+#### Step 3 — Add a Public Hostname (one per site)
+
+In the tunnel config, add a hostname:
+
+| Field | Value (for this site) |
+|---|---|
+| **Subdomain** | `jakarta` |
+| **Domain** | `nandharu.uk` |
+| **Type** | `HTTP` |
+| **URL** | `nginx-gateway:80` |
+
+For future sites, add more hostnames in the same tunnel:
+
+| Field | Value (example) |
+|---|---|
+| **Subdomain** | `portfolio` |
+| **Domain** | `nandharu.uk` |
+| **Type** | `HTTP` |
+| **URL** | `nginx-gateway:80` |
+
+All sites share the **same tunnel, same token, same nginx-gateway**. Nginx routes by `server_name` in each site's `.conf`.
+
+#### Step 4 — Deploy on the server
+
+**First-time full setup (one command):**
 ```bash
-fly launch          # first time
-fly deploy          # subsequent
+git clone https://github.com/chikiball/aidatajakarta.git /tmp/setup && \
+sudo bash /tmp/setup/server-setup/scripts/init-server.sh YOUR_TUNNEL_TOKEN && \
+rm -rf /tmp/setup
 ```
-- Region: **sin** (Singapore), shared CPU, 1 GB RAM
-- Force HTTPS, auto-start/stop
-- GitHub Actions: `.github/workflows/fly-deploy.yml`
 
-### 9D. Local development
+**If server is already set up (just adding tunnel token):**
+```bash
+sudo bash -c 'echo "CF_TUNNEL_TOKEN=your-token" > /home/nandha/server/.env'
+cd /home/nandha/server && sudo docker compose up -d
+```
+
+#### Step 5 — Verify
 
 ```bash
-pip install -r requirements.txt
-python app.py       # → http://localhost:8080
+# All 3 containers running?
+sudo docker ps --format "table {{.Names}}\t{{.Status}}"
+
+# Tunnel connected?  Look for "Connection ... registered"
+sudo docker logs cloudflare-tunnel --tail 5
+
+# Full dashboard
+sudo bash /home/nandha/server/scripts/status.sh
+
+# HTTP check
+curl -sI https://jakarta.nandharu.uk | head -5
+```
+
+#### Gotchas encountered during setup
+
+| Issue | Cause | Fix |
+|---|---|---|
+| `Permission denied` writing `.env` | Server dir owned by root | Use `sudo bash -c 'echo "..." > .env'` |
+| `network server-net incorrect label` | Network created by `docker network create` but compose tries to manage it | Set `external: true` in compose `networks:` section |
+| `Unauthorized: Invalid tunnel secret` | Token truncated by Docker Compose `.env` interpolation | Put token directly in `docker-compose.yml` environment value instead of using `${CF_TUNNEL_TOKEN}` |
+| Cloudflare UI: no "Tunnels" in sidebar | Cloudflare renamed it | Go to **Networks → Connectors** instead |
+| Token vs Tunnel ID confusion | Tunnel ID is a short UUID, token starts with `eyJ` | Copy the long `eyJ...` string from the Docker install command |
+
+**Working `docker-compose.yml` pattern for the server gateway** (with token inlined to avoid interpolation issues):
+
+```yaml
+services:
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflare-tunnel
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=eyJhIjoiYWYy...your-actual-token...SJ9
+    networks:
+      - server-net
+    depends_on:
+      - nginx
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-gateway
+    restart: unless-stopped
+    expose:
+      - "80"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    networks:
+      - server-net
+
+networks:
+  server-net:
+    external: true
 ```
 
 ---
 
-## 10. Known Limitations & Future Ideas
+## 10. Deploying a New Site (Playbook)
+
+Follow this playbook for every new site on the same server.
+
+### Step 1 — Prepare the site repo
+
+The site's `docker-compose.yml` must follow this convention:
+
+```yaml
+services:
+  app:
+    build: .
+    container_name: mysitename        # ← unique name, nginx proxies to this
+    restart: unless-stopped
+    expose:
+      - "3000"                        # ← internal port (any number)
+    networks:
+      - server-net
+    # Recommended security hardening:
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: '1.0'
+
+networks:
+  server-net:
+    external: true
+```
+
+Key rules:
+- **`container_name`** must be unique across all sites
+- Use **`expose`** (not `ports`) — no host port binding
+- Join **`server-net`** as external network
+- Add security hardening (read_only, no-new-privileges, resource limits)
+
+### Step 2 — Add nginx config for the site
+
+```bash
+sudo tee /home/nandha/server/nginx/conf.d/mysitename.conf << 'NGINX'
+server {
+    listen 80;
+    server_name mysite.nandharu.uk;
+
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml;
+
+    location / {
+        limit_req zone=general burst=20 nodelay;
+        proxy_pass http://mysitename:3000;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $http_cf_connecting_ip;
+        proxy_set_header X-Forwarded-For   $http_cf_connecting_ip;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+NGINX
+```
+
+### Step 3 — Add hostname in Cloudflare
+
+1. [one.dash.cloudflare.com](https://one.dash.cloudflare.com) → Networks → Connectors
+2. Click your tunnel (`home-server`) → **Public Hostname** tab → **Add a public hostname**
+3. Subdomain: `mysite`, Domain: `nandharu.uk`, Type: `HTTP`, URL: `nginx-gateway:80`
+
+### Step 4 — Clone, build, deploy
+
+```bash
+# Clone
+sudo git clone https://github.com/you/mysite.git /home/nandha/server/sites/mysitename
+
+# Build & start
+cd /home/nandha/server/sites/mysitename
+sudo docker compose up -d --build
+
+# Reload nginx
+sudo docker exec nginx-gateway nginx -s reload
+
+# Verify
+curl -sI https://mysite.nandharu.uk | head -5
+```
+
+Or use the helper script:
+```bash
+sudo bash /home/nandha/server/scripts/add-site.sh mysitename https://github.com/you/mysite.git 3000
+sudo bash /home/nandha/server/scripts/deploy-site.sh mysitename
+```
+
+### Step 5 — Verify all sites
+
+```bash
+sudo bash /home/nandha/server/scripts/status.sh
+```
+
+### Checklist for new site
+
+- [ ] Repo has `Dockerfile` + `docker-compose.yml` with `server-net` external network
+- [ ] `container_name` is unique
+- [ ] Uses `expose` (not `ports`)
+- [ ] Nginx conf created in `/home/nandha/server/nginx/conf.d/<name>.conf`
+- [ ] `server_name` in nginx conf matches the subdomain
+- [ ] Public hostname added in Cloudflare tunnel config
+- [ ] `nginx -s reload` executed after adding conf
+- [ ] Site accessible at `https://<subdomain>.nandharu.uk`
+
+---
+
+## 11. Known Limitations & Future Ideas
 
 - **Mikrotrans** only has 31 data points → low confidence.
 - **LRT** narrow range (R² 0.28) → consider separate feature engineering.
@@ -399,3 +528,4 @@ python app.py       # → http://localhost:8080
 - Consider **Cloudflare Access** for admin endpoints (`/api/update-now`).
 - Consider **weather data** as features (rain affects Jakarta commuting).
 - Consider **lagged features** (yesterday's count) if real-time data becomes available.
+- Token in `docker-compose.yml` is a workaround — Docker Compose `.env` interpolation truncated it. If fixed upstream, move token back to `.env`.
