@@ -4,6 +4,7 @@
 > Repo: `https://github.com/chikiball/aidatajakarta.git`
 > Local: `/Users/nandha_handharu/Documents/Nandha/GitHub/aidatajakarta`
 > Server: `/home/nandha/server/sites/aidatajakarta` (Ubuntu home server)
+> Live: **https://jakarta.nandharu.uk**
 
 ---
 
