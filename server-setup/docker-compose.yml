@@ -1,0 +1,22 @@
+# ═══════════════════════════════════════════════════
+# Gateway Nginx — lives at /home/nandha/server/
+# Manages reverse proxy for ALL sites.
+# ═══════════════════════════════════════════════════
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-gateway
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    networks:
+      - server-net
+
+networks:
+  server-net:
+    name: server-net
+    driver: bridge

@@ -1,15 +1,17 @@
 services:
   app:
     build: .
-    container_name: ${COMPOSE_PROJECT_NAME:-aidatajakarta}
+    container_name: aidatajakarta
     restart: unless-stopped
-    ports:
-      - "${HOST_PORT:-8081}:8080"
+    expose:
+      - "8080"
     volumes:
       - app-data:/app/data
       - app-models:/app/models
     environment:
       - PORT=8080
+    networks:
+      - server-net
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/api/update-status"]
       interval: 60s
@@ -20,3 +22,7 @@ services:
 volumes:
   app-data:
   app-models:
+
+networks:
+  server-net:
+    external: true

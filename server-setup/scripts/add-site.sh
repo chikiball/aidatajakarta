@@ -1,48 +1,42 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════
 # Scaffold a new site
-# Usage: sudo bash add-site.sh <name> <git-repo-url> <port>
-# Example: sudo bash add-site.sh myportfolio https://github.com/user/portfolio.git 8082
+# Usage: sudo bash add-site.sh <name> <git-repo-url> [internal-port]
+#
+# Example:
+#   sudo bash add-site.sh myportfolio https://github.com/user/portfolio.git 3000
+#
+# The site's docker-compose.yml must:
+#   - Set container_name: <name>
+#   - Use network: server-net (external: true)
+#   - Expose its internal port (default: 8080)
 # ═══════════════════════════════════════════════════
 set -euo pipefail
 
-NAME="${1:?Usage: add-site.sh <name> <git-repo-url> <port>}"
+NAME="${1:?Usage: add-site.sh <name> <git-repo-url> [internal-port]}"
 REPO="${2:?Provide git repo URL}"
-PORT="${3:?Provide host port (e.g. 8082)}"
+PORT="${3:-8080}"
 
-SERVER_ROOT="/home/nandha/server"
-SITE_DIR="$SERVER_ROOT/sites/$NAME"
-NGINX_CONF="$SERVER_ROOT/nginx/conf.d/$NAME.conf"
-
-# Check port not already taken
-if grep -q "^$PORT " "$SERVER_ROOT/ports.conf" 2>/dev/null; then
-    echo "❌ Port $PORT is already registered in ports.conf"
-    exit 1
-fi
+SERVER="/home/nandha/server"
+SITE_DIR="$SERVER/sites/$NAME"
+NGINX_CONF="$SERVER/nginx/conf.d/$NAME.conf"
 
 if [ -d "$SITE_DIR" ]; then
-    echo "❌ Site directory already exists: $SITE_DIR"
+    echo "❌ Already exists: $SITE_DIR"
     exit 1
 fi
 
-echo "═══ Adding site: $NAME (port $PORT) ═══"
+echo "═══ Adding site: $NAME ═══"
 
 # Clone
 echo "⬇️  Cloning $REPO ..."
 git clone "$REPO" "$SITE_DIR"
 
-# Create .env
-cat > "$SITE_DIR/.env" << ENV
-COMPOSE_PROJECT_NAME=$NAME
-HOST_PORT=$PORT
-ENV
-echo "  ✅ .env created (port $PORT)"
-
-# Generate Nginx config
+# Generate Nginx config (proxies to container by name)
 cat > "$NGINX_CONF" << NGINX
 server {
     listen 80;
-    server_name $NAME.local;  # ← change to real domain
+    server_name ${NAME}.local;  # ← change to real domain
 
     add_header X-Frame-Options        "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
@@ -52,7 +46,7 @@ server {
     gzip_min_length 256;
 
     location / {
-        proxy_pass http://127.0.0.1:$PORT;
+        proxy_pass http://${NAME}:${PORT};
         proxy_set_header Host              \$host;
         proxy_set_header X-Real-IP         \$remote_addr;
         proxy_set_header X-Forwarded-For   \$proxy_add_x_forwarded_for;
@@ -63,17 +57,15 @@ server {
 NGINX
 echo "  ✅ Nginx config: $NGINX_CONF"
 
-# Register port
-echo "$PORT  $NAME  active" >> "$SERVER_ROOT/ports.conf"
-echo "  ✅ Registered in ports.conf"
-
-# Reload Nginx
-nginx -t && systemctl reload nginx
+# Reload nginx
+docker exec nginx-gateway nginx -s reload
 echo "  ✅ Nginx reloaded"
 
 echo ""
 echo "📋 Next steps:"
-echo "   1. Check $SITE_DIR has a docker-compose.yml (and .env with HOST_PORT)"
-echo "   2. Run:  sudo bash $SERVER_ROOT/scripts/deploy-site.sh $NAME"
-echo "   3. Edit server_name in $NGINX_CONF if using a domain"
+echo "   1. Ensure $SITE_DIR/docker-compose.yml uses:"
+echo "        container_name: $NAME"
+echo "        networks: [server-net]    (with server-net external: true)"
+echo "   2. Run:  sudo bash $SERVER/scripts/deploy-site.sh $NAME"
+echo "   3. Edit server_name in $NGINX_CONF to your domain"
 echo ""

@@ -1,90 +1,93 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════
 # One-time server bootstrap
-# Sets up /home/nandha/server/ folder structure and
-# tells host Nginx to read configs from our conf.d/
+# Creates /home/nandha/server/ structure, starts
+# the Nginx gateway container, deploys aidatajakarta.
+#
+# Usage:  sudo bash init-server.sh
 # ═══════════════════════════════════════════════════
 set -euo pipefail
 
-SERVER_ROOT="/home/nandha/server"
-NGINX_CONF_DIR="$SERVER_ROOT/nginx/conf.d"
-SITES_DIR="$SERVER_ROOT/sites"
-SCRIPTS_DIR="$SERVER_ROOT/scripts"
+SERVER="/home/nandha/server"
 
-echo "🏗️  Creating server folder structure..."
-mkdir -p "$NGINX_CONF_DIR" "$SITES_DIR" "$SCRIPTS_DIR"
+echo ""
+echo "═══════════════════════════════════════════"
+echo "  🏗️  Setting up multi-site home server"
+echo "═══════════════════════════════════════════"
+echo ""
 
-# Create port registry
-if [ ! -f "$SERVER_ROOT/ports.conf" ]; then
-    cat > "$SERVER_ROOT/ports.conf" << 'PORTS'
-# ─── Port Registry ───
-# Each site gets a unique host port.
-# Format: PORT  SITE_NAME  STATUS
-# ──────────────────────────────────
-8081  aidatajakarta  active
-# 8082  (next site)  reserved
-# 8083  (next site)  reserved
-PORTS
-    echo "  ✅ ports.conf created"
-fi
+# ─── 1. Create folder structure ───
+echo "1/5  Creating folders..."
+mkdir -p "$SERVER"/{nginx/conf.d,nginx/certs,sites,scripts}
 
-# Tell host Nginx to include our conf.d directory
-INCLUDE_LINE="include $NGINX_CONF_DIR/*.conf;"
-NGINX_MAIN="/etc/nginx/nginx.conf"
+# ─── 2. Create the shared Docker network ───
+echo "2/5  Creating Docker network: server-net..."
+docker network create server-net 2>/dev/null && echo "     ✅ Created" || echo "     ✅ Already exists"
 
-if grep -qF "$INCLUDE_LINE" "$NGINX_MAIN" 2>/dev/null; then
-    echo "  ✅ Nginx already includes our conf.d"
+# ─── 3. Set up Nginx gateway ───
+echo "3/5  Starting Nginx gateway container..."
+
+cat > "$SERVER/docker-compose.yml" << 'DC'
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-gateway
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    networks:
+      - server-net
+
+networks:
+  server-net:
+    external: true
+DC
+
+cd "$SERVER"
+docker compose up -d
+echo "     ✅ Nginx gateway running on :80"
+
+# ─── 4. Clone & deploy aidatajakarta ───
+echo "4/5  Deploying aidatajakarta..."
+SITE_DIR="$SERVER/sites/aidatajakarta"
+
+if [ -d "$SITE_DIR" ]; then
+    echo "     Site already cloned, pulling latest..."
+    cd "$SITE_DIR" && git pull origin main
 else
-    echo ""
-    echo "  ⚠️  Add this line inside the 'http { }' block of $NGINX_MAIN :"
-    echo ""
-    echo "      $INCLUDE_LINE"
-    echo ""
-    echo "  Or run:"
-    echo "      sudo sed -i '/http {/a\\    $INCLUDE_LINE' $NGINX_MAIN"
-    echo ""
+    git clone https://github.com/chikiball/aidatajakarta.git "$SITE_DIR"
 fi
 
-# Create a README
-cat > "$SERVER_ROOT/README.md" << 'README'
-# Home Server — Multi-Site Setup
+cd "$SITE_DIR"
+docker compose up -d --build
 
-## Folder Structure
-```
-/home/nandha/server/
-├── nginx/
-│   └── conf.d/              ← Nginx reads all *.conf here
-│       ├── aidatajakarta.conf
-│       └── nextsite.conf    (future)
-├── sites/
-│   ├── aidatajakarta/       ← git clone + docker compose
-│   └── nextsite/            (future)
-├── scripts/
-│   ├── deploy-site.sh       ← deploy/redeploy any site
-│   ├── status.sh            ← check all sites
-│   └── add-site.sh          ← scaffold a new site
-├── ports.conf               ← central port registry
-└── README.md
-```
+# Copy nginx config for this site
+cp "$SITE_DIR/server-setup/nginx/aidatajakarta.conf" "$SERVER/nginx/conf.d/"
 
-## Convention
-- Each site is a git repo cloned into `sites/<name>/`
-- Each site has its own `docker-compose.yml` + `.env`
-- Each site binds to a unique host port (8081, 8082, ...)
-- Nginx config for each site in `nginx/conf.d/<name>.conf`
-- Ports are tracked in `ports.conf`
+# Reload nginx to pick up the new config
+docker exec nginx-gateway nginx -s reload
+echo "     ✅ aidatajakarta deployed"
 
-## Commands
-```bash
-# Deploy / redeploy a site
-sudo bash scripts/deploy-site.sh aidatajakarta
+# ─── 5. Copy management scripts ───
+echo "5/5  Installing management scripts..."
+cp "$SITE_DIR/server-setup/scripts/deploy-site.sh" "$SERVER/scripts/"
+cp "$SITE_DIR/server-setup/scripts/status.sh"      "$SERVER/scripts/"
+cp "$SITE_DIR/server-setup/scripts/add-site.sh"    "$SERVER/scripts/"
+chmod +x "$SERVER/scripts/"*.sh
 
-# Check all sites
-sudo bash scripts/status.sh
-
-# Add a new site
-sudo bash scripts/add-site.sh mysite https://github.com/user/mysite.git 8082
-```
-README
-
-echo "✅ Server structure ready at $SERVER_ROOT"
+# ─── Done ───
+echo ""
+echo "═══════════════════════════════════════════"
+echo "  ✅  Server is live!"
+echo ""
+echo "  Open:   http://$(hostname -I 2>/dev/null | awk '{print $1}' || echo 'your-server-ip')"
+echo ""
+echo "  Manage:"
+echo "    sudo bash $SERVER/scripts/status.sh"
+echo "    sudo bash $SERVER/scripts/deploy-site.sh aidatajakarta"
+echo "    sudo bash $SERVER/scripts/add-site.sh <name> <repo> <port>"
+echo "═══════════════════════════════════════════"

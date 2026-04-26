@@ -1,44 +1,57 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════
-# Check status of all sites
+# Dashboard — check all sites
 # Usage: sudo bash status.sh
 # ═══════════════════════════════════════════════════
-SERVER_ROOT="/home/nandha/server"
-SITES_DIR="$SERVER_ROOT/sites"
+SERVER="/home/nandha/server"
 
+echo ""
 echo "═══════════════════════════════════════════"
-echo "  🏠 Home Server — Site Status"
+echo "  🏠 Home Server Status"
 echo "═══════════════════════════════════════════"
 echo ""
-printf "  %-20s %-6s %-12s %s\n" "SITE" "PORT" "CONTAINER" "HEALTH"
-printf "  %-20s %-6s %-12s %s\n" "────────────────────" "──────" "────────────" "──────"
 
-for SITE_DIR in "$SITES_DIR"/*/; do
+# Nginx gateway
+NGINX_STATUS=$(docker inspect --format='{{.State.Status}}' nginx-gateway 2>/dev/null || echo "not running")
+if [ "$NGINX_STATUS" = "running" ]; then
+    echo "  🟢 nginx-gateway    running    :80 :443"
+else
+    echo "  🔴 nginx-gateway    $NGINX_STATUS"
+fi
+echo ""
+
+printf "  %-22s %-14s %s\n" "SITE" "CONTAINER" "HEALTH"
+printf "  %-22s %-14s %s\n" "──────────────────────" "──────────────" "──────"
+
+for SITE_DIR in "$SERVER/sites"/*/; do
     [ -d "$SITE_DIR" ] || continue
     SITE=$(basename "$SITE_DIR")
 
-    # Read port from .env
-    PORT=$(grep -E '^HOST_PORT=' "$SITE_DIR/.env" 2>/dev/null | cut -d= -f2 || echo "-")
+    STATUS=$(docker inspect --format='{{.State.Status}}' "$SITE" 2>/dev/null || echo "not found")
 
-    # Check Docker container
-    CONTAINER_STATUS=$(docker inspect --format='{{.State.Status}}' "$SITE" 2>/dev/null || echo "not found")
-
-    # Health check
-    if [ "$PORT" != "-" ] && curl -sf "http://localhost:$PORT/" > /dev/null 2>&1; then
-        HEALTH="🟢 healthy"
-    elif [ "$CONTAINER_STATUS" = "running" ]; then
-        HEALTH="🟡 running (no http)"
+    if [ "$STATUS" = "running" ]; then
+        HEALTHY=$(docker inspect --format='{{.State.Health.Status}}' "$SITE" 2>/dev/null || echo "none")
+        case "$HEALTHY" in
+            healthy)  HEALTH="🟢 healthy" ;;
+            starting) HEALTH="🟡 starting" ;;
+            *)        HEALTH="🟡 running" ;;
+        esac
     else
-        HEALTH="🔴 down"
+        HEALTH="🔴 $STATUS"
     fi
 
-    printf "  %-20s %-6s %-12s %s\n" "$SITE" "$PORT" "$CONTAINER_STATUS" "$HEALTH"
+    printf "  %-22s %-14s %s\n" "$SITE" "$STATUS" "$HEALTH"
 done
 
 echo ""
-echo "  Docker containers:"
-docker ps --format "    {{.Names}}  {{.Status}}  {{.Ports}}" 2>/dev/null || echo "    (docker not available)"
+echo "  Nginx configs:"
+ls -1 "$SERVER/nginx/conf.d/"*.conf 2>/dev/null | while read f; do
+    echo "    📄 $(basename "$f")"
+done
+
 echo ""
-echo "  Nginx status:"
-echo "    $(systemctl is-active nginx 2>/dev/null || echo 'unknown')"
+echo "  Docker network:"
+docker network inspect server-net --format='    Containers: {{len .Containers}}' 2>/dev/null || echo "    ⚠️ server-net not found"
+
+echo ""
 echo "═══════════════════════════════════════════"

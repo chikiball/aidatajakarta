@@ -6,39 +6,41 @@
 set -euo pipefail
 
 SITE="${1:?Usage: deploy-site.sh <sitename>}"
-SERVER_ROOT="/home/nandha/server"
-SITE_DIR="$SERVER_ROOT/sites/$SITE"
+SERVER="/home/nandha/server"
+SITE_DIR="$SERVER/sites/$SITE"
 
 if [ ! -d "$SITE_DIR" ]; then
-    echo "❌ Site directory not found: $SITE_DIR"
+    echo "❌ Not found: $SITE_DIR"
     exit 1
 fi
 
 echo "═══ Deploying: $SITE ═══"
 cd "$SITE_DIR"
 
-# Pull latest
-echo "⬇️  Pulling latest code..."
+echo "⬇️  Pulling latest..."
 git pull origin main
 
-# Build & restart
-echo "🔨 Building container..."
+echo "🔨 Building..."
 docker compose build
 
-echo "🔄 Starting container..."
+echo "🔄 Starting..."
 docker compose up -d
 
-# Read port from .env
-HOST_PORT=$(grep -E '^HOST_PORT=' .env 2>/dev/null | cut -d= -f2 || echo "?")
+# Copy nginx config if it exists in the repo
+if [ -f "$SITE_DIR/server-setup/nginx/$SITE.conf" ]; then
+    cp "$SITE_DIR/server-setup/nginx/$SITE.conf" "$SERVER/nginx/conf.d/"
+    docker exec nginx-gateway nginx -s reload
+    echo "🔄 Nginx reloaded"
+fi
 
-echo "⏳ Waiting for health check on :$HOST_PORT ..."
+echo "⏳ Health check..."
 for i in $(seq 1 24); do
-    if curl -sf "http://localhost:$HOST_PORT/" > /dev/null 2>&1; then
-        echo "✅ $SITE is live on port $HOST_PORT"
+    if docker exec "$SITE" curl -sf http://localhost:8080/ > /dev/null 2>&1; then
+        echo "✅ $SITE is healthy!"
         exit 0
     fi
     sleep 5
 done
 
-echo "⚠️  Health check timed out — check: docker compose -f $SITE_DIR/docker-compose.yml logs --tail 50"
+echo "⚠️  Timed out — check: cd $SITE_DIR && docker compose logs --tail 50"
 exit 1
