@@ -1,0 +1,22 @@
+services:
+  app:
+    build: .
+    container_name: aidatajakarta
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - app-data:/app/data
+      - app-models:/app/models
+    environment:
+      - PORT=8080
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/update-status"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+volumes:
+  app-data:
+  app-models:
