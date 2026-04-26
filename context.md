@@ -177,153 +177,210 @@ aidatajakarta/
 4. Updates in-memory `update_status` dict (exposed via `/api/update-status`).
 5. Frontend polls status and shows green/yellow/red dot in header.
 
----
 
 ## 9. Deployment
 
 ### 9A. Self-Hosted Ubuntu Server (primary)
 
-#### Architecture — All-Docker, No Host Nginx
+#### Architecture — Cloudflare Tunnel + All-Docker
 
-The server runs an **all-Docker** multi-site architecture. There is no host-level Nginx — everything runs in containers on a shared Docker network called `server-net`. Nginx routes to app containers **by container name** (DNS resolution on the Docker network), so no host-port allocation is needed.
+The server uses a **zero-exposed-ports** architecture. Traffic flows through a Cloudflare Tunnel — an outbound-only encrypted connection from the server to Cloudflare's edge. No router port forwarding is needed and the home IP is never revealed.
+
+```
+Internet → Cloudflare Edge (DDoS/WAF/SSL) → cloudflared tunnel → nginx-gateway → app
+```
+
+All components run as Docker containers on a shared network (`server-net`).
 
 ```
 /home/nandha/server/
-├── docker-compose.yml          ← nginx-gateway container (ports 80, 443)
+├── docker-compose.yml          ← nginx-gateway + cloudflare-tunnel containers
+├── .env                        ← CF_TUNNEL_TOKEN (secret, not in git)
 ├── nginx/
-│   ├── conf.d/                 ← Nginx reads *.conf from here
-│   │   ├── aidatajakarta.conf  ← proxy_pass http://aidatajakarta:8080
-│   │   └── <nextsite>.conf     ← proxy_pass http://<nextsite>:<port> (future)
-│   └── certs/                  ← for future SSL certificates
+│   ├── nginx.conf              ← Hardened main config (rate limits, headers, bot block)
+│   ├── conf.d/                 ← Per-site reverse proxy configs
+│   │   ├── aidatajakarta.conf
+│   │   └── <nextsite>.conf     (future)
+│   └── certs/                  ← Reserved for future SSL
 ├── sites/
 │   ├── aidatajakarta/          ← git clone of this repo
-│   │   ├── docker-compose.yml     container_name: aidatajakarta
-│   │   ├── Dockerfile             python:3.11-slim + gunicorn
-│   │   └── ...                    app code
-│   └── <nextsite>/             ← future sites (same pattern)
-└── scripts/
-    ├── init-server.sh          ← one-time full bootstrap (creates everything)
-    ├── deploy-site.sh <name>   ← pull → build → restart → health check
-    ├── status.sh               ← dashboard for all running sites
-    └── add-site.sh <n> <r> <p> ← scaffold a new site + nginx config
+│   └── <nextsite>/             (future)
+├── scripts/
+│   ├── init-server.sh          ← One-time full bootstrap
+│   ├── deploy-site.sh <name>   ← Pull → build → restart → health check
+│   ├── status.sh               ← Dashboard for all sites
+│   └── add-site.sh <n> <r> <p> ← Scaffold a new site
+└── security/
+    └── harden-os.sh            ← UFW + Fail2Ban + SSH hardening
 ```
 
 #### How containers connect
 
 ```
-Internet :80/:443
-    │
+Internet
+    │ (HTTPS, Cloudflare-terminated)
     ▼
-┌──────────────────────┐
-│  nginx-gateway       │  (nginx:alpine, ports 80/443 on host)
-│  network: server-net │
-└──────┬───────────────┘
-       │  proxy_pass http://aidatajakarta:8080
-       ▼
-┌──────────────────────┐
-│  aidatajakarta       │  (python:3.11-slim, expose 8080 — no host port)
-│  network: server-net │
-│  volumes: app-data,  │
-│           app-models │
-└──────────────────────┘
+┌──────────────────────────────┐
+│  Cloudflare Edge             │  DDoS protection, WAF, SSL, caching, geo-block
+└──────────┬───────────────────┘
+           │ (encrypted tunnel, outbound-only)
+           ▼
+┌──────────────────────────────┐
+│  cloudflare-tunnel           │  (cloudflare/cloudflared:latest)
+│  network: server-net         │  No host ports — outbound connection only
+└──────────┬───────────────────┘
+           │ proxy_pass http://nginx-gateway:80
+           ▼
+┌──────────────────────────────┐
+│  nginx-gateway               │  (nginx:alpine, expose 80 — NO host port)
+│  network: server-net         │  Rate limiting, security headers, bot blocking
+└──────────┬───────────────────┘
+           │ proxy_pass http://aidatajakarta:8080
+           ▼
+┌──────────────────────────────┐
+│  aidatajakarta               │  (python:3.11-slim, non-root, read-only fs)
+│  network: server-net         │  expose 8080, no host port
+│  volumes: app-data,          │  Resource limits: 1 GB RAM, 1 CPU
+│           app-models         │
+└──────────────────────────────┘
 ```
 
-- `nginx-gateway` is the **only** container with host port bindings (80, 443).
-- App containers use `expose` (internal only) — never `ports`.
-- Nginx resolves `http://aidatajakarta:8080` via Docker's built-in DNS on `server-net`.
-- Each site is isolated in its own `docker-compose.yml` and can be started/stopped independently.
+**Key security properties:**
+- **Zero host port bindings** — no container exposes ports to the host network.
+- Cloudflare Tunnel is **outbound-only** — the server initiates the connection.
+- Nginx is only reachable by `cloudflare-tunnel` on the Docker network.
+- App container runs as **non-root user**, with **read-only filesystem** and **no-new-privileges**.
 
 #### Key files
 
 | File | Location | Purpose |
 |---|---|---|
-| `server-setup/docker-compose.yml` | Copied to `/home/nandha/server/` | Defines nginx-gateway + server-net network |
-| `server-setup/nginx/aidatajakarta.conf` | Copied to `nginx/conf.d/` | Reverse proxy config for this site |
-| `server-setup/scripts/init-server.sh` | Runs once | Creates folders, network, nginx container, deploys app |
-| `server-setup/scripts/deploy-site.sh` | Ongoing use | `git pull` → `docker compose build` → `up -d` → health check |
-| `server-setup/scripts/status.sh` | Ongoing use | Shows all sites, container status, health, nginx configs |
-| `server-setup/scripts/add-site.sh` | Future sites | Clones repo, generates nginx conf, reloads gateway |
-| `docker-compose.yml` (repo root) | Per-site | App container with `server-net` external network + named volumes |
+| `server-setup/docker-compose.yml` | → `/home/nandha/server/` | Nginx gateway + Cloudflare Tunnel + server-net |
+| `server-setup/nginx/nginx.conf` | → `nginx/nginx.conf` | Hardened main config (rate limits, headers, bot block) |
+| `server-setup/nginx/aidatajakarta.conf` | → `nginx/conf.d/` | Per-route rate limiting, Cloudflare IP forwarding |
+| `server-setup/scripts/init-server.sh` | Runs once | Full bootstrap (6 steps including OS hardening) |
+| `server-setup/security/harden-os.sh` | Runs once | UFW firewall + Fail2Ban + SSH hardening |
+| `docker-compose.yml` (repo root) | Per-site | App container: read-only, non-root, resource-limited |
+| `Dockerfile` | Per-site | Non-root `appuser`, curl for healthcheck |
 
-#### First-time setup (one command)
+#### First-time setup
 
 ```bash
+# Without Cloudflare token (LAN-only, add tunnel later):
 git clone https://github.com/chikiball/aidatajakarta.git /tmp/setup && \
 sudo bash /tmp/setup/server-setup/scripts/init-server.sh && \
 rm -rf /tmp/setup
+
+# With Cloudflare token (full public access):
+git clone https://github.com/chikiball/aidatajakarta.git /tmp/setup && \
+sudo bash /tmp/setup/server-setup/scripts/init-server.sh YOUR_TUNNEL_TOKEN && \
+rm -rf /tmp/setup
 ```
 
-The init script performs 5 steps:
-1. Creates `/home/nandha/server/{nginx/conf.d, nginx/certs, sites, scripts}`
+The init script performs 6 steps:
+1. Creates `/home/nandha/server/{nginx, sites, scripts, security}`
 2. Creates Docker network `server-net`
-3. Starts `nginx-gateway` container (ports 80 & 443 → host)
-4. Clones repo into `sites/aidatajakarta/`, builds & starts app container
-5. Copies nginx config and management scripts
+3. Starts nginx-gateway + cloudflare-tunnel containers
+4. Clones repo, builds & starts aidatajakarta container
+5. Copies management scripts
+6. Runs OS hardening (UFW, Fail2Ban, SSH)
 
-#### Redeploy after code changes
+#### Cloudflare Tunnel setup
 
-```bash
-sudo bash /home/nandha/server/scripts/deploy-site.sh aidatajakarta
-```
-
-#### Check status
-
-```bash
-sudo bash /home/nandha/server/scripts/status.sh
-```
-
-#### Adding a future second site
-
-```bash
-sudo bash /home/nandha/server/scripts/add-site.sh mysite https://github.com/user/mysite.git 3000
-sudo bash /home/nandha/server/scripts/deploy-site.sh mysite
-```
-
-The new site's `docker-compose.yml` must follow the convention:
-```yaml
-services:
-  app:
-    container_name: mysite        # ← nginx proxies to this name
-    expose: ["3000"]              # ← internal port only, no host binding
-    networks: [server-net]
-networks:
-  server-net:
-    external: true
-```
-
-#### Data persistence
-
-- Docker **named volumes** (`app-data`, `app-models`) survive container restarts and rebuilds.
-- On first boot (or if volumes are empty), the app auto-fetches from the Jakarta API and trains models.
+1. Go to [Cloudflare Zero Trust](https://one.dash.cloudflare.com) → Networks → Tunnels
+2. Create a tunnel → copy the token
+3. In the tunnel config, add a **Public Hostname**:
+   - Subdomain: `jakarta` (or whatever you want)
+   - Domain: `yourdomain.com`
+   - Service: `http://nginx-gateway:80`
+4. Pass the token to `init-server.sh` or save it:
+   ```bash
+   echo 'CF_TUNNEL_TOKEN=your-token' > /home/nandha/server/.env
+   cd /home/nandha/server && sudo docker compose up -d
+   ```
 
 #### Useful commands
 
 | Task | Command |
 |---|---|
 | View app logs | `cd /home/nandha/server/sites/aidatajakarta && sudo docker compose logs -f --tail 50` |
-| Restart app only | `cd /home/nandha/server/sites/aidatajakarta && sudo docker compose restart` |
+| Restart app | `cd /home/nandha/server/sites/aidatajakarta && sudo docker compose restart` |
 | Restart nginx | `sudo docker exec nginx-gateway nginx -s reload` |
-| Stop everything | `cd /home/nandha/server && sudo docker compose down` (nginx) then per-site |
-| Force rebuild | `cd /home/nandha/server/sites/aidatajakarta && sudo docker compose up -d --build --force-recreate` |
-| Trigger data refresh | `curl -X POST http://localhost/api/update-now` |
-| Docker disk usage | `sudo docker system df` |
-| Clean unused images | `sudo docker image prune -f` |
+| Restart tunnel | `sudo docker restart cloudflare-tunnel` |
+| Redeploy site | `sudo bash /home/nandha/server/scripts/deploy-site.sh aidatajakarta` |
+| Status dashboard | `sudo bash /home/nandha/server/scripts/status.sh` |
+| Firewall status | `sudo ufw status verbose` |
+| Fail2Ban status | `sudo fail2ban-client status sshd` |
 
 ---
 
-### 9B. Fly.io (alternative / staging)
+### 9B. Security — Defense in Depth (5 Layers)
+
+#### Layer 1: Cloudflare (edge)
+- **DDoS protection** — absorbs volumetric attacks at Cloudflare's edge
+- **WAF** — blocks SQL injection, XSS, etc.
+- **SSL termination** — free HTTPS, visitors never see your server
+- **Bot management** — challenge suspicious traffic
+- **IP hiding** — home IP never revealed
+- **Geo-blocking** — optionally restrict to specific countries
+- **Caching** — reduces load for static assets
+
+#### Layer 2: OS Firewall + Fail2Ban (`server-setup/security/harden-os.sh`)
+
+| Component | Config |
+|---|---|
+| **UFW** | Default deny incoming, allow outgoing. SSH only from LAN (`192.168.0.0/16`). Zero public ports. |
+| **Fail2Ban** | SSH: 3 failed attempts → 24h ban. |
+| **SSH** | Root login disabled, max 3 auth tries, X11 forwarding off. |
+| **Auto-updates** | `unattended-upgrades` for security patches. |
+
+#### Layer 3: Nginx Hardening (`server-setup/nginx/nginx.conf`)
+
+| Protection | Detail |
+|---|---|
+| **Rate limiting** | General: 10 req/s (burst 20). API: 5 req/s (burst 10). POST update: 1 req/s. |
+| **Connection limits** | 30 per IP (general), 10 (API). |
+| **Security headers** | X-Frame-Options, X-Content-Type-Options, XSS-Protection, Referrer-Policy, Permissions-Policy |
+| **Server hide** | `server_tokens off`. |
+| **Bad bot block** | User-agent filter: sqlmap, nikto, nmap, dirbuster, masscan. |
+| **Path blocking** | 404 for `.env`, `.git`, `wp-admin`, `.php`, `cgi-bin`. |
+| **Request limits** | Max body 1 MB, header limits, 10s timeouts. |
+| **Real IP** | Uses `$http_cf_connecting_ip` from Cloudflare. |
+
+#### Layer 4: Docker Isolation (`docker-compose.yml` + `Dockerfile`)
+
+| Protection | Detail |
+|---|---|
+| **Non-root user** | Runs as `appuser` inside container. |
+| **Read-only filesystem** | `read_only: true`. |
+| **Writable tmpfs** | Only `/tmp` (in-memory). |
+| **No privilege escalation** | `no-new-privileges: true`. |
+| **Resource limits** | 1 GB RAM, 1 CPU max. |
+| **No host ports** | `expose` only. |
+| **Named volumes** | `app-data`, `app-models` are the only writable persistent paths. |
+
+#### Layer 5: Application
+
+| Property | Detail |
+|---|---|
+| **Read-only API** | No user input stored. No database. No file uploads. |
+| **No authentication needed** | Public data only. |
+| **Minimal surface** | 7 GET + 1 POST endpoint. |
+| **No secrets in code** | Tunnel token in `.env` on server (not in git). |
+
+---
+
+### 9C. Fly.io (alternative / staging)
 
 ```bash
-fly launch          # first time — creates app 'aidatajakarta' in sin region
-fly deploy          # subsequent deploys
+fly launch          # first time
+fly deploy          # subsequent
 ```
-- Region: **sin** (Singapore)
-- VM: shared CPU, 1 GB RAM
-- Port: 8080, force HTTPS, auto-start/stop
-- No persistent volume — data/models rebuilt on each restart (auto-fetch on startup)
-- GitHub Actions workflow in `.github/workflows/fly-deploy.yml`
+- Region: **sin** (Singapore), shared CPU, 1 GB RAM
+- Force HTTPS, auto-start/stop
+- GitHub Actions: `.github/workflows/fly-deploy.yml`
 
-### 9C. Local development
+### 9D. Local development
 
 ```bash
 pip install -r requirements.txt
@@ -334,11 +391,10 @@ python app.py       # → http://localhost:8080
 
 ## 10. Known Limitations & Future Ideas
 
-- **Mikrotrans** only has 31 data points → low confidence. Will improve as daily updates accumulate.
-- **LRT** has narrow passenger range (1,450–8,345) → model underfits (R² 0.28). Consider separate feature engineering.
-- **KRL** has high variance and zero-value outliers → could benefit from outlier filtering.
-- Holiday calendar is **hardcoded** through 2026. Needs annual extension or dynamic source.
-- **SSL/HTTPS** not yet configured on home server. Add with Let's Encrypt + certbot container or mount certs into `nginx/certs/`.
-- Consider **weather data** as additional features (rain strongly affects Jakarta commuting).
-- Consider **lagged features** (yesterday's passenger count) if real-time data becomes available.
-- Fly.io has no persistent volume — data/models are rebuilt on each deploy/restart (acceptable since auto-fetch runs on startup). Home server uses Docker named volumes which persist.
+- **Mikrotrans** only has 31 data points → low confidence.
+- **LRT** narrow range (R² 0.28) → consider separate feature engineering.
+- **KRL** high variance / zero outliers → consider filtering.
+- Holiday calendar **hardcoded** through 2026 → needs annual extension.
+- Consider **Cloudflare Access** for admin endpoints (`/api/update-now`).
+- Consider **weather data** as features (rain affects Jakarta commuting).
+- Consider **lagged features** (yesterday's count) if real-time data becomes available.

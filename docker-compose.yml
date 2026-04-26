@@ -12,6 +12,19 @@ services:
       - PORT=8080
     networks:
       - server-net
+    # ─── Security hardening ───
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: '1.0'
+        reservations:
+          memory: 256m
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/api/update-status"]
       interval: 60s
