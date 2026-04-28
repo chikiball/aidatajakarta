@@ -409,6 +409,101 @@ networks:
 
 ---
 
+### 9D. Remote SSH via Cloudflare Tunnel
+
+Secure remote access to the home server from any network — zero open ports, home IP hidden.
+
+#### Traffic flow
+
+```
+Your Mac (anywhere)
+    │
+    ▼  cloudflared access ssh (ProxyCommand)
+┌──────────────────────────────┐
+│  Cloudflare Edge             │  Zero Trust Access policy (email OTP)
+└──────────┬───────────────────┘
+           │  encrypted tunnel (outbound-only from server)
+           ▼
+┌──────────────────────────────┐
+│  cloudflare-tunnel           │  extra_hosts: host.docker.internal:host-gateway
+│  container on server-net     │
+└──────────┬───────────────────┘
+           │  host.docker.internal:22
+           ▼
+┌──────────────────────────────┐
+│  sshd on host                │  UFW still denies all inbound — no port 22 exposed
+│                              │  SSH key auth required after tunnel auth
+└──────────────────────────────┘
+```
+
+#### Cloudflare dashboard config
+
+**Public hostname** (in `home-server` tunnel → Public Hostname tab):
+
+| Field | Value |
+|---|---|
+| Subdomain | `ssh` |
+| Domain | `nandharu.uk` |
+| Type | `SSH` |
+| URL | `host.docker.internal:22` |
+
+**Access policy** (Access → Applications → Self-hosted):
+
+| Field | Value |
+|---|---|
+| Application name | `SSH Home Server` |
+| Subdomain | `ssh` |
+| Domain | `nandharu.uk` |
+| Policy | Include → Emails → `your-email` |
+
+#### Server-side change
+
+`extra_hosts` added to tunnel service in `/home/nandha/server/docker-compose.yml`:
+
+```yaml
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflare-tunnel
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${CF_TUNNEL_TOKEN}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - server-net
+    depends_on:
+      - nginx
+```
+
+After changing, restart tunnel: `cd /home/nandha/server && sudo docker compose up -d --force-recreate tunnel`
+
+#### Client-side setup (Mac)
+
+Requires `cloudflared` installed (`brew install cloudflared`).
+
+`~/.ssh/config`:
+
+```ssh-config
+Host ssh.nandharu.uk
+    HostName ssh.nandharu.uk
+    User nandha
+    ProxyCommand /usr/local/bin/cloudflared access ssh --hostname %h
+    IdentityFile ~/.ssh/id_rsa
+```
+
+Connect: `ssh ssh.nandharu.uk`
+
+First connection opens a browser for Cloudflare Zero Trust email OTP. After auth, SSH session connects through the tunnel.
+
+#### Security layers (3-deep)
+
+| Layer | What |
+|---|---|
+| **Cloudflare Access** | Email OTP gate — blocks all unauthenticated traffic |
+| **Tunnel** | Outbound-only, encrypted — no inbound ports, IP hidden |
+| **sshd** | SSH key auth, Fail2Ban (3 attempts → 24h ban), root login disabled |
+
 ## 10. Deploying a New Site (Playbook)
 
 Follow this playbook for every new site on the same server.
